@@ -1,15 +1,17 @@
+#inject
+
 #ifdef RVO_VERT
+
+#include "engine_data.glsl"
 
 layout(location = 0) in vec3 iPosition;
 layout(location = 1) in vec3 iNormal;
 layout(location = 2) in vec2 iTexCoord;
 
-uniform mat4 uProjection;
-uniform mat4 uView;
 uniform mat4 uTransform;
 
 void main(void) {
-    gl_Position = uProjection * uView * uTransform * vec4(iPosition, 1.0);
+    gl_Position = gProjection * gView * uTransform * vec4(iPosition, 1.0);
 }
 
 #endif

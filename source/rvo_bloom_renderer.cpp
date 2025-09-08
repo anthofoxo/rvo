@@ -93,14 +93,14 @@ namespace rvo {
 		glBlendEquation(GL_FUNC_ADD);
 
 		// Start at highest mip and work our way back to the base mip
-		for (int level = mMipSizes.size() - 1; level > 0; --level) {
+		for (std::size_t level = mMipSizes.size() - 1; level > 0; --level) {
 			const auto& srcMipSize = mMipSizes[level];
 			const auto& dstMipSize = mMipSizes[level - 1];
 
 			// Read from level, write into level-1
-			glTextureParameteri(mMipChain.handle(), GL_TEXTURE_BASE_LEVEL, level);
-			glTextureParameteri(mMipChain.handle(), GL_TEXTURE_MAX_LEVEL, level);
-			glNamedFramebufferTexture(mFramebuffer.handle(), GL_COLOR_ATTACHMENT0, mMipChain.handle(), level - 1);
+			glTextureParameteri(mMipChain.handle(), GL_TEXTURE_BASE_LEVEL, static_cast<GLint>(level));
+			glTextureParameteri(mMipChain.handle(), GL_TEXTURE_MAX_LEVEL, static_cast<GLint>(level));
+			glNamedFramebufferTexture(mFramebuffer.handle(), GL_COLOR_ATTACHMENT0, mMipChain.handle(), static_cast<GLint>(level) - 1);
 
 			glViewport(0, 0, dstMipSize.x, dstMipSize.y);
 			glDrawArrays(GL_TRIANGLES, 0, 3);

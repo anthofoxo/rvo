@@ -5,3 +5,4 @@
 #include "gfx/rvo_renderbuffer.hpp"
 #include "gfx/rvo_framebuffer.hpp"
 #include "gfx/rvo_mesh.hpp"
+#include "gfx/rvo_buffer.hpp"

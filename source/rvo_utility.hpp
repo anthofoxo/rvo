@@ -12,6 +12,7 @@ namespace rvo {
 	template<typename T> auto size_bytes(T const& data) noexcept { return sizeof(typename T::value_type) * data.size(); }
 
 	std::optional<std::vector<std::byte>> read_file_bytes(std::filesystem::path const& aPath);
+	std::optional<std::string> read_file_string(std::filesystem::path const& aPath);
 
 	struct StringMultiHash final {
 		using hash_type = std::hash<std::string_view>;

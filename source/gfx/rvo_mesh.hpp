@@ -1,5 +1,7 @@
 #pragma once
 
+#include "rvo_buffer.hpp"
+
 #include <glm/glm.hpp>
 #include <glad/gl.h>
 
@@ -26,7 +28,8 @@ namespace rvo {
 		void render() const;
 
 	private:
-		GLuint mVao = 0, mVbo = 0, mEbo = 0;
+		GLuint mVao = 0;
+		Buffer mVbo, mEbo;
 		GLsizei mCount = 0;
 	};
 }

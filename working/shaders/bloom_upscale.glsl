@@ -1,4 +1,5 @@
-#include </fullscreen.vert.glsl>
+#inject
+#include "fullscreen.vert.glsl"
 
 #ifdef RVO_FRAG
 // This shader performs upsampling on a texture,

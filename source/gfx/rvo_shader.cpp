@@ -9,33 +9,11 @@
 
 namespace rvo {
 	Shader::Shader(GLenum aType, std::string_view aSource) {
-
-		constexpr int numSources = 3;
-		std::array<char const*, numSources> sources;
-		std::array<GLint, numSources> lengths;
-
-		sources[0] = "#version 460 core\n#extension GL_ARB_shading_language_include : require\n";
-		lengths[0] = -1;
-
-		switch (aType) {
-		case GL_VERTEX_SHADER:
-			sources[1] = "#define RVO_VERT\n";
-			break;
-		case GL_FRAGMENT_SHADER:
-			sources[1] = "#define RVO_FRAG\n";
-			break;
-		default:
-			sources[1] = "#define RVO_UNKN\n";
-			break;
-		}
-
-		lengths[1] = -1;
-
-		sources[2] = aSource.data();
-		lengths[2] = aSource.size();
+		char const* cString = aSource.data();
+		GLint cLength = static_cast<GLint>(aSource.size());
 
 		mHandle = glCreateShader(aType);
-		glShaderSource(mHandle, numSources, sources.data(), lengths.data());
+		glShaderSource(mHandle, 1, &cString, &cLength);
 		glCompileShader(mHandle);
 
 		GLint logLength;
@@ -44,7 +22,7 @@ namespace rvo {
 		if (logLength > 0) {
 			std::vector<GLchar> data(logLength);
 
-			glGetShaderInfoLog(mHandle, data.size(), nullptr, data.data());
+			glGetShaderInfoLog(mHandle, static_cast<GLsizei>(data.size()), nullptr, data.data());
 			spdlog::error("{}", data.data());
 
 #ifdef _WIN32
@@ -83,7 +61,7 @@ namespace rvo {
 		if (logLength > 0) {
 			std::vector<GLchar> data(logLength);
 
-			glGetProgramInfoLog(mHandle, data.size(), nullptr, data.data());
+			glGetProgramInfoLog(mHandle, static_cast<GLsizei>(data.size()), nullptr, data.data());
 			spdlog::error("{}", data.data());
 
 #ifdef _WIN32

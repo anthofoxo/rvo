@@ -52,13 +52,19 @@ namespace rvo {
 	Mesh::Mesh(char const* aPath) {
 		auto [vertices, elements] = read_mesh(aPath);
 
-		glCreateBuffers(1, &mVbo);
-		glNamedBufferStorage(mVbo, rvo::size_bytes(vertices), vertices.data(), GL_NONE);
-		glCreateBuffers(1, &mEbo);
-		glNamedBufferStorage(mEbo, rvo::size_bytes(elements), elements.data(), GL_NONE);
+		mVbo = { {
+				.data = std::as_bytes(std::span(vertices)),
+				.flags = GL_NONE,
+			} };
+
+		mEbo = { {
+				.data = std::as_bytes(std::span(elements)),
+				.flags = GL_NONE,
+			} };
+
 		glCreateVertexArrays(1, &mVao);
-		glVertexArrayVertexBuffer(mVao, 0, mVbo, 0, sizeof(StandardVertex));
-		glVertexArrayElementBuffer(mVao, mEbo);
+		glVertexArrayVertexBuffer(mVao, 0, mVbo.handle(), 0, sizeof(StandardVertex));
+		glVertexArrayElementBuffer(mVao, mEbo.handle());
 		glEnableVertexArrayAttrib(mVao, 0);
 		glEnableVertexArrayAttrib(mVao, 1);
 		glEnableVertexArrayAttrib(mVao, 2);
@@ -81,8 +87,6 @@ namespace rvo {
 
 	Mesh::~Mesh() noexcept {
 		if (mVao) glDeleteVertexArrays(1, &mVao);
-		if (mVbo) glDeleteBuffers(1, &mVbo);
-		if (mEbo) glDeleteBuffers(1, &mEbo);
 	}
 
 	void Mesh::render() const {

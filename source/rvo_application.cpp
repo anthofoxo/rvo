@@ -5,6 +5,7 @@
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 #include <misc/cpp/imgui_stdlib.h>
+#include <ImGuizmo.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
@@ -115,6 +116,11 @@ struct MeshRenderer final {
 	std::unordered_map<std::string, std::any> mFields;
 };
 
+struct EngineShaderData final {
+	alignas(16) glm::mat4 view;
+	alignas(16) glm::mat4 projection;
+};
+
 struct Application final {
 	void set_cursor_lock(bool aLocked) {
 		mCursorLocked = aLocked;
@@ -137,21 +143,6 @@ struct Application final {
 			.height = 720,
 			.title = "Game",
 			} };
-
-		if (!GLAD_GL_ARB_shading_language_include) {
-			spdlog::critical("GL_ARB_shading_language_include is required to continue");
-			throw std::runtime_error("Cannot continue, GL_ARB_shading_language_include is required");
-		}
-
-		for (auto const& entry : std::filesystem::directory_iterator("shaders/include")) {
-			if (!entry.is_regular_file()) continue;
-
-			std::string stem = std::string("/") + entry.path().filename().generic_string();
-
-			auto data = rvo::read_file_bytes(entry.path()).value();
-			
-			glNamedStringARB(GL_SHADER_INCLUDE_ARB, stem.size(), stem.data(), data.size(), reinterpret_cast<GLchar const*>(data.data()));
-		}
 
 		glfwSetWindowUserPointer(mWindow.handle(), this);
 
@@ -203,19 +194,34 @@ struct Application final {
 
 		mCameraTransform.position = { 0.0f, 1.5f, 5.0f };
 
-		for (int x = 0; x < 10; ++x) {
+		mEngineShaderBuffer = { {
+				.data = std::as_bytes(std::span(static_cast<EngineShaderData*>(nullptr), 1)),
+				.flags = GL_DYNAMIC_STORAGE_BIT,
+			} };
+
+		glBindBufferBase(GL_UNIFORM_BUFFER, 0, mEngineShaderBuffer.handle());
+
+		for (int x = 0; x < 20; ++x) {
 			for (int z = 0; z < 10; ++z) {
 				entt::handle entity = { mRegistry, mRegistry.create() };
 				auto& gameObject = entity.emplace<GameObject>();
 				auto& meshRenderer = entity.emplace<MeshRenderer>();
 
-				gameObject.mTransform.position.x = x * 3 - 15;
-				gameObject.mTransform.position.z = z * 3 - 15;
+				gameObject.mTransform.position.x = x * 3.0f - 30.0f;
+				gameObject.mTransform.position.z = z * 6.0f - 30.0f;
 
-				gameObject.mName = std::format("Yeen {}_{}", x, z);
+				gameObject.mName = std::format("Minion {}_{}", x, z);
 				meshRenderer.mShaderProgram = mAssetManager.get_shader_program("shaders/opaque.glsl");
-				meshRenderer.mMesh = mAssetManager.get_mesh("meshes/yeen.ply");
-				meshRenderer.mTexture = mAssetManager.get_texture("textures/yeen_a.png");
+
+				if ((x + z) % 2 == 0) {
+					meshRenderer.mMesh = mAssetManager.get_mesh("meshes/fox.ply");
+					meshRenderer.mTexture = mAssetManager.get_texture("textures/fox_a.png");
+				}
+				else {
+					meshRenderer.mMesh = mAssetManager.get_mesh("meshes/yeen.ply");
+					meshRenderer.mTexture = mAssetManager.get_texture("textures/yeen_a.png");
+				}
+				
 			}
 		}
 
@@ -296,7 +302,7 @@ struct Application final {
 			} };
 
 			mFboDepth = { {
-					.internalFormat = GL_DEPTH_COMPONENT16,
+					.internalFormat = GL_DEPTH_COMPONENT32F,
 					.width = mFboSize.x,
 					.height = mFboSize.y,
 				} };
@@ -325,20 +331,26 @@ struct Application final {
 			if (mKeysDown.contains(GLFW_KEY_LEFT_SHIFT)) --direction.y;
 			if (mKeysDown.contains(GLFW_KEY_SPACE)) ++direction.y;
 			if (mKeysDown.contains(GLFW_KEY_LEFT_CONTROL)) direction *= 3.0f;
+			if (mKeysDown.contains(GLFW_KEY_LEFT_ALT)) direction /= 5.0f;
 
 			mCameraTransform.translate(direction * 10.0f * static_cast<float>(mDeltaTime));
 		}
 
 		float const aspectRatio = static_cast<float>(mFramebufferSize.x) / static_cast<float>(mFramebufferSize.y);
-		glm::mat4 const projection = glm::perspective(glm::radians(mFieldOfView), aspectRatio, mNearPlane, mFarPlane);
-		glm::mat4 const view = glm::inverse(mCameraTransform.get());
+		
+		mEngineShaderData.projection = glm::perspective(glm::radians(mFieldOfView), aspectRatio, mNearPlane, mFarPlane);
+		mEngineShaderData.view = glm::inverse(mCameraTransform.get());
+
+		glNamedBufferSubData(mEngineShaderBuffer.handle(), 0, sizeof(EngineShaderData), &mEngineShaderData);
+
+		if (mWireframe) {
+			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+		}
 
 		for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
 			if (!gameObject.mEnabled) continue;
 
 			meshRenderer.mShaderProgram->bind();
-			meshRenderer.mShaderProgram->push_mat4f("uProjection", projection);
-			meshRenderer.mShaderProgram->push_mat4f("uView", view);
 			meshRenderer.mShaderProgram->push_mat4f("uTransform", gameObject.mTransform.get());
 
 			// Fields
@@ -354,6 +366,10 @@ struct Application final {
 
 			if (meshRenderer.mTexture) meshRenderer.mTexture->bind(0);
 			meshRenderer.mMesh->render();
+		}
+
+		if (mWireframe) {
+			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 		}
 
 		bloomRenderer.render(mFboSize, mFboColor, mFilterRadius, aspectRatio);
@@ -400,6 +416,7 @@ struct Application final {
 			ImGui_ImplOpenGL3_NewFrame();
 			ImGui_ImplGlfw_NewFrame();
 			ImGui::NewFrame();
+			ImGuizmo::BeginFrame();
 
 			if (ImGui::BeginMainMenuBar()) {
 				if (ImGui::BeginMenu("View")) {
@@ -437,6 +454,7 @@ struct Application final {
 				if (ImGui::Checkbox("VSync", &mVsync)) {
 					glfwSwapInterval(mVsync ? 1 : 0);
 				}
+				ImGui::Checkbox("Wireframe", &mWireframe);
 				
 				ImGui::LabelText("Cursor Pos", "%.1f x %.1f", mCursorPos.x, mCursorPos.y);
 				ImGui::LabelText("Cursor Delta", "%.1f x %.1f", mCursorDelta.x, mCursorDelta.y);
@@ -526,6 +544,14 @@ struct Application final {
 			}
 			ImGui::End();
 
+			if (selected != entt::null) {
+				glm::mat4 matrix = mRegistry.get<GameObject>(selected).mTransform.get();
+				ImGuizmo::SetRect(0, 0, static_cast<float>(mFramebufferSize.x), static_cast<float>(mFramebufferSize.y));
+				if (ImGuizmo::Manipulate(glm::value_ptr(mEngineShaderData.view), glm::value_ptr(mEngineShaderData.projection), ImGuizmo::OPERATION::TRANSLATE, ImGuizmo::MODE::LOCAL, glm::value_ptr(matrix))) {
+					mRegistry.get<GameObject>(selected).mTransform.set(matrix);
+				}
+			}
+
 			ImGui::Render();
 			ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -565,6 +591,9 @@ struct Application final {
 	rvo::Renderbuffer mFboDepth;
 	rvo::Framebuffer mFbo;
 
+	rvo::Buffer mEngineShaderBuffer;
+	EngineShaderData mEngineShaderData;
+
 	float mBloomBlend = 0.02f;
 	float mFilterRadius = 0.003f;
 	float mNearPlane = 0.1f;
@@ -572,6 +601,7 @@ struct Application final {
 	float mFieldOfView = 90.0f;
 	bool mCursorLocked = false;
 	bool mVsync = true;
+	bool mWireframe = false;
 
 	rvo::BloomRenderer bloomRenderer;
 

@@ -58,9 +58,10 @@ includedirs {
     "%{wks.location}/vendor/glm",
     "%{wks.location}/vendor/spdlog/include",
     "%{wks.location}/vendor/entt/src",
+    "%{wks.location}/vendor/imguizmo",
 }
 
 defines "GLFW_INCLUDE_NONE"
 debugdir "%{wks.location}/working"
 
-links { "glfw", "glad", "imgui" }
+links { "glfw", "glad", "imgui", "imguizmo" }
