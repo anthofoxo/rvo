@@ -1,0 +1,10 @@
+Makefile
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+/.vs
+/bin
+/bin_int
+/working/imgui.ini
+/working/log.txt

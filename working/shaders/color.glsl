@@ -1,0 +1,27 @@
+#ifdef RVO_VERT
+
+layout(location = 0) in vec3 iPosition;
+layout(location = 1) in vec3 iNormal;
+layout(location = 2) in vec2 iTexCoord;
+
+uniform mat4 uProjection;
+uniform mat4 uView;
+uniform mat4 uTransform;
+
+void main(void) {
+    gl_Position = uProjection * uView * uTransform * vec4(iPosition, 1.0);
+}
+
+#endif
+
+#ifdef RVO_FRAG
+
+layout (location = 0) out vec4 oColor;
+
+uniform vec3 uColor;
+
+void main(void) {
+    oColor = vec4(uColor, 1.0);
+}
+
+#endif
