@@ -188,7 +188,7 @@ struct Application final {
 
 		configure_khr_debug();
 
-		glfwSwapInterval(1);
+		glfwSwapInterval(1); // ensure `mVsync == true`
 
 		imgui_init(mWindow.handle());
 
@@ -330,7 +330,7 @@ struct Application final {
 		}
 
 		float const aspectRatio = static_cast<float>(mFramebufferSize.x) / static_cast<float>(mFramebufferSize.y);
-		glm::mat4 const projection = glm::perspective(glm::radians(90.0f), aspectRatio, 0.1f, 256.0f);
+		glm::mat4 const projection = glm::perspective(glm::radians(mFieldOfView), aspectRatio, mNearPlane, mFarPlane);
 		glm::mat4 const view = glm::inverse(mCameraTransform.get());
 
 		for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
@@ -356,14 +356,14 @@ struct Application final {
 			meshRenderer.mMesh->render();
 		}
 
-		bloomRenderer.render(mFboSize, mFboColor, filterRadius, aspectRatio);
+		bloomRenderer.render(mFboSize, mFboColor, mFilterRadius, aspectRatio);
 
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		glViewport(0, 0, mFboSize.x, mFboSize.y);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
 		mShaderProgramComposite->bind();
-		mShaderProgramComposite->push_1f("uBlend", bloomBlend);
+		mShaderProgramComposite->push_1f("uBlend", mBloomBlend);
 		mFboColor.bind(0);
 		bloomRenderer.mip_chain().bind(1);
 		glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -429,8 +429,14 @@ struct Application final {
 			if (imguiDemoWindow) ImGui::ShowDemoWindow(&imguiDemoWindow);
 
 			if (ImGui::Begin("Debug")) {
-				ImGui::SliderFloat("Bloom Blend", &bloomBlend, 0.0f, 1.0f);
-				ImGui::SliderFloat("Bloom Upscale Filter Radius (ST)", &filterRadius, 0.0001f, 0.1f);
+				ImGui::SliderFloat("Bloom Blend", &mBloomBlend, 0.0f, 1.0f);
+				ImGui::SliderFloat("Bloom Upscale Filter Radius (ST)", &mFilterRadius, 0.0001f, 0.1f);
+				ImGui::SliderFloat("Field of View", &mFieldOfView, 20.0f, 160.0f);
+				ImGui::SliderFloat("Near Plane", &mNearPlane, 0.001f, 10.0f);
+				ImGui::SliderFloat("Far Plane", &mFarPlane, 10.0f, 1024.0f);
+				if (ImGui::Checkbox("VSync", &mVsync)) {
+					glfwSwapInterval(mVsync ? 1 : 0);
+				}
 				
 				ImGui::LabelText("Cursor Pos", "%.1f x %.1f", mCursorPos.x, mCursorPos.y);
 				ImGui::LabelText("Cursor Delta", "%.1f x %.1f", mCursorDelta.x, mCursorDelta.y);
@@ -559,9 +565,13 @@ struct Application final {
 	rvo::Renderbuffer mFboDepth;
 	rvo::Framebuffer mFbo;
 
-	float bloomBlend = 0.02f;
-	float filterRadius = 0.003f;
+	float mBloomBlend = 0.02f;
+	float mFilterRadius = 0.003f;
+	float mNearPlane = 0.1f;
+	float mFarPlane = 256.0f;
+	float mFieldOfView = 90.0f;
 	bool mCursorLocked = false;
+	bool mVsync = true;
 
 	rvo::BloomRenderer bloomRenderer;
 
