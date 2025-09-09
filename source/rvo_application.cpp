@@ -342,10 +342,14 @@ struct Application final {
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
 		if (mCursorLocked) {
-			glm::vec3 localUpWorld = glm::inverse(mCameraTransform.get()) * glm::vec4(0.0f, -1.0f, 0.0f, 0.0f);
+			glm::vec3 localUpWorld = glm::inverse(mCameraTransform.get()) * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
 
-			mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.x * 0.3f), localUpWorld);
-			mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.y * 0.3f), { -1.0f, 0.0f, 0.0f });
+
+			float sensitivity = -0.3f;
+			if (mKeysDown.contains(GLFW_KEY_C)) sensitivity /= 4.0f;
+
+			mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.x * sensitivity), localUpWorld);
+			mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.y * sensitivity), { 1.0f, 0.0f, 0.0f });
 
 			glm::vec3 direction{};
 			if (mKeysDown.contains(GLFW_KEY_W)) --direction.z;
@@ -362,7 +366,9 @@ struct Application final {
 
 		float const aspectRatio = static_cast<float>(mFramebufferSize.x) / static_cast<float>(mFramebufferSize.y);
 		
-		mEngineShaderData.projection = glm::perspective(glm::radians(mFieldOfView), aspectRatio, mNearPlane, mFarPlane);
+		float const targetFov = mKeysDown.contains(GLFW_KEY_C) ? mFieldOfView / 4.0f : mFieldOfView;
+
+		mEngineShaderData.projection = glm::perspective(glm::radians(targetFov), aspectRatio, mNearPlane, mFarPlane);
 		mEngineShaderData.view = glm::inverse(mCameraTransform.get());
 
 		glNamedBufferSubData(mEngineShaderBuffer.handle(), 0, sizeof(EngineShaderData), &mEngineShaderData);
