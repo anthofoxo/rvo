@@ -219,6 +219,59 @@ void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
 	lua_close(L);
 }
 
+struct GBuffers final {
+	glm::ivec2 mSize{};
+	rvo::Texture mFboColor;
+	rvo::Renderbuffer mFboDepth;
+	rvo::Framebuffer mFbo;
+
+	rvo::Texture mFboFinalColor;
+	rvo::Framebuffer mFboFinal;
+
+	void resize(glm::ivec2 const& aTargetSize) {
+		if (aTargetSize == mSize) return;
+
+		spdlog::debug("Viewport size changed from {}x{} to {}x{}. Recreating framebuffer", mSize.x, mSize.y, aTargetSize.x, aTargetSize.y);
+		mSize = aTargetSize;
+
+		mFbo = rvo::Framebuffer::CreateInfo{};
+
+		mFboColor = { {
+			.levels = 1,
+			.internalFormat = GL_R11F_G11F_B10F,
+			.width = mSize.x,
+			.height = mSize.y,
+			.minFilter = GL_LINEAR,
+			.magFilter = GL_LINEAR,
+			.wrap = GL_CLAMP_TO_EDGE,
+			.anisotropy = 1.0f,
+		} };
+
+		mFboDepth = { {
+				.internalFormat = GL_DEPTH_COMPONENT32F,
+				.width = mSize.x,
+				.height = mSize.y,
+			} };
+
+		glNamedFramebufferTexture(mFbo.handle(), GL_COLOR_ATTACHMENT0, mFboColor.handle(), 0);
+		glNamedFramebufferRenderbuffer(mFbo.handle(), GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, mFboDepth.handle());
+
+		mFboFinalColor = { {
+				.levels = 1,
+				.internalFormat = GL_RGBA8,
+				.width = mSize.x,
+				.height = mSize.y,
+				.minFilter = GL_LINEAR,
+				.magFilter = GL_LINEAR,
+				.wrap = GL_CLAMP_TO_EDGE,
+				.anisotropy = 1.0f,
+			} };
+
+		mFboFinal = rvo::Framebuffer::CreateInfo{};
+		glNamedFramebufferTexture(mFboFinal.handle(), GL_COLOR_ATTACHMENT0, mFboFinalColor.handle(), 0);
+	}
+};
+
 struct Application final {
 	void set_cursor_lock(bool aLocked) {
 		mCursorLocked = aLocked;
@@ -303,125 +356,118 @@ struct Application final {
 	}
 
 	void update() {
-		glEnable(GL_CULL_FACE);
-		glEnable(GL_DEPTH_TEST);
-		glCullFace(GL_BACK);
-		glFrontFace(GL_CCW);
+		if (ImGui::Begin("Viewport")) {
+			ImVec2 avail = ImGui::GetContentRegionAvail();
+			ImVec2 cursor = ImGui::GetCursorPos();
 
-		// Is the viewport a different size?
-		if (mFramebufferSize != mFboSize) {
-			spdlog::debug("Viewport size changed from {}x{} to {}x{}. Recreating framebuffer", mFboSize.x, mFboSize.y, mFramebufferSize.x, mFramebufferSize.y);
-			mFboSize = mFramebufferSize;
+			if (avail.x > 0 && avail.y > 0) {
 
-			mFbo = rvo::Framebuffer::CreateInfo{};
+				mGBuffers.resize(glm::vec2(avail.x, avail.y));
 
-			mFboColor = { {
-				.levels = 1,
-				.internalFormat = GL_R11F_G11F_B10F,
-				.width = mFboSize.x,
-				.height = mFboSize.y,
-				.minFilter = GL_LINEAR,
-				.magFilter = GL_LINEAR,
-				.wrap = GL_CLAMP_TO_EDGE,
-				.anisotropy = 1.0f,
-			} };
-
-			mFboDepth = { {
-					.internalFormat = GL_DEPTH_COMPONENT32F,
-					.width = mFboSize.x,
-					.height = mFboSize.y,
-				} };
-
-			glNamedFramebufferTexture(mFbo.handle(), GL_COLOR_ATTACHMENT0, mFboColor.handle(), 0);
-			glNamedFramebufferRenderbuffer(mFbo.handle(), GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, mFboDepth.handle());
-		}
-
-		mFbo.bind();
-		glViewport(0, 0, mFboSize.x, mFboSize.y);
-
-		glClearColor(glm::pow(0.7f, 2.2f), glm::pow(0.8f, 2.2f), glm::pow(0.9f, 2.2f), 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-
-		if (mCursorLocked) {
-			glm::vec3 localUpWorld = glm::inverse(mCameraTransform.get()) * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
-
-
-			float sensitivity = -0.3f;
-			if (mKeysDown.contains(GLFW_KEY_C)) sensitivity /= 4.0f;
-
-			mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.x * sensitivity), localUpWorld);
-			mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.y * sensitivity), { 1.0f, 0.0f, 0.0f });
-
-			glm::vec3 direction{};
-			if (mKeysDown.contains(GLFW_KEY_W)) --direction.z;
-			if (mKeysDown.contains(GLFW_KEY_S)) ++direction.z;
-			if (mKeysDown.contains(GLFW_KEY_A)) --direction.x;
-			if (mKeysDown.contains(GLFW_KEY_D)) ++direction.x;
-			if (mKeysDown.contains(GLFW_KEY_LEFT_SHIFT)) --direction.y;
-			if (mKeysDown.contains(GLFW_KEY_SPACE)) ++direction.y;
-			if (mKeysDown.contains(GLFW_KEY_LEFT_CONTROL)) direction *= 3.0f;
-			if (mKeysDown.contains(GLFW_KEY_LEFT_ALT)) direction /= 5.0f;
-
-			mCameraTransform.translate(direction * 10.0f * static_cast<float>(mDeltaTime));
-		}
-
-		float const aspectRatio = static_cast<float>(mFramebufferSize.x) / static_cast<float>(mFramebufferSize.y);
-		
-		float const targetFov = mKeysDown.contains(GLFW_KEY_C) ? mFieldOfView / 4.0f : mFieldOfView;
-
-		mEngineShaderData.projection = glm::perspective(glm::radians(targetFov), aspectRatio, mNearPlane, mFarPlane);
-		mEngineShaderData.view = glm::inverse(mCameraTransform.get());
-
-		glNamedBufferSubData(mEngineShaderBuffer.handle(), 0, sizeof(EngineShaderData), &mEngineShaderData);
-
-		if (mWireframe) {
-			glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-		}
-
-		for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
-			if (!gameObject.mEnabled) continue;
-
-			if (!meshRenderer.mShaderProgram->mBackfaceCull) {
-				glDisable(GL_CULL_FACE);
-			}
-
-			meshRenderer.mShaderProgram->bind();
-			meshRenderer.mShaderProgram->push_mat4f("uTransform", gameObject.mTransform.get());
-
-			// Fields
-			for(const auto& [key, field] : meshRenderer.mFields) {
-				if (auto const* value = std::any_cast<glm::vec3>(&field)) {
-					meshRenderer.mShaderProgram->push_3f(key, *value);
-				}
-				else {
-					spdlog::warn("Unsupported material field type `{}` on entity `{}`", field.type().name(), gameObject.mName);
-					gameObject.mEnabled = false;
-				}
-			}
-
-			if (meshRenderer.mTexture) meshRenderer.mTexture->bind(0);
-			meshRenderer.mMesh->render();
-
-			if (!meshRenderer.mShaderProgram->mBackfaceCull) {
 				glEnable(GL_CULL_FACE);
+				glEnable(GL_DEPTH_TEST);
+				glCullFace(GL_BACK);
+				glFrontFace(GL_CCW);
+
+				if (mCursorLocked) {
+					glm::vec3 localUpWorld = glm::inverse(mCameraTransform.get()) * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+
+
+					float sensitivity = -0.3f;
+					if (mKeysDown.contains(GLFW_KEY_C)) sensitivity /= 4.0f;
+
+					mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.x * sensitivity), localUpWorld);
+					mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.y * sensitivity), { 1.0f, 0.0f, 0.0f });
+
+					glm::vec3 direction{};
+					if (mKeysDown.contains(GLFW_KEY_W)) --direction.z;
+					if (mKeysDown.contains(GLFW_KEY_S)) ++direction.z;
+					if (mKeysDown.contains(GLFW_KEY_A)) --direction.x;
+					if (mKeysDown.contains(GLFW_KEY_D)) ++direction.x;
+					if (mKeysDown.contains(GLFW_KEY_LEFT_SHIFT)) --direction.y;
+					if (mKeysDown.contains(GLFW_KEY_SPACE)) ++direction.y;
+					if (mKeysDown.contains(GLFW_KEY_LEFT_CONTROL)) direction *= 3.0f;
+					if (mKeysDown.contains(GLFW_KEY_LEFT_ALT)) direction /= 5.0f;
+
+					mCameraTransform.translate(direction * 10.0f * static_cast<float>(mDeltaTime));
+				}
+
+				float const aspectRatio = static_cast<float>(mGBuffers.mSize.x) / static_cast<float>(mGBuffers.mSize.y);
+				float const targetFov = mKeysDown.contains(GLFW_KEY_C) ? mFieldOfView / 4.0f : mFieldOfView;
+
+				mEngineShaderData.projection = glm::perspective(glm::radians(targetFov), aspectRatio, mNearPlane, mFarPlane);
+				mEngineShaderData.view = glm::inverse(mCameraTransform.get());
+				glNamedBufferSubData(mEngineShaderBuffer.handle(), 0, sizeof(EngineShaderData), &mEngineShaderData);
+
+				mGBuffers.mFbo.bind();
+				glViewport(0, 0, mGBuffers.mSize.x, mGBuffers.mSize.y);
+
+				glClearColor(glm::pow(0.7f, 2.2f), glm::pow(0.8f, 2.2f), glm::pow(0.9f, 2.2f), 1.0f);
+				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+				if (mWireframe) {
+					glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+				}
+
+				for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
+					if (!gameObject.mEnabled) continue;
+
+					if (!meshRenderer.mShaderProgram->mBackfaceCull) {
+						glDisable(GL_CULL_FACE);
+					}
+
+					meshRenderer.mShaderProgram->bind();
+					meshRenderer.mShaderProgram->push_mat4f("uTransform", gameObject.mTransform.get());
+
+					for (const auto& [key, field] : meshRenderer.mFields) {
+						if (auto const* value = std::any_cast<glm::vec3>(&field)) {
+							meshRenderer.mShaderProgram->push_3f(key, *value);
+						}
+						else {
+							spdlog::warn("Unsupported material field type `{}` on entity `{}`", field.type().name(), gameObject.mName);
+							gameObject.mEnabled = false;
+						}
+					}
+
+					if (meshRenderer.mTexture) meshRenderer.mTexture->bind(0);
+					meshRenderer.mMesh->render();
+
+					if (!meshRenderer.mShaderProgram->mBackfaceCull) {
+						glEnable(GL_CULL_FACE);
+					}
+				}
+
+				if (mWireframe) {
+					glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+				}
+
+				bloomRenderer.render(mGBuffers.mSize, mGBuffers.mFboColor, mFilterRadius, aspectRatio);
+
+				mGBuffers.mFboFinal.bind();
+				glViewport(0, 0, mGBuffers.mSize.x, mGBuffers.mSize.y);
+
+				mShaderProgramComposite->bind();
+				mShaderProgramComposite->push_1f("uBlend", mBloomBlend);
+				mGBuffers.mFboColor.bind(0);
+				bloomRenderer.mip_chain().bind(1);
+				glDrawArrays(GL_TRIANGLES, 0, 3);
+
+				glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+				ImGui::Image(mGBuffers.mFboFinalColor.handle(), avail, { 0, 1 }, { 1, 0 });
+
+				if (mEditorSelected != entt::null) {
+					glm::mat4 matrix = mRegistry.get<GameObject>(mEditorSelected).mTransform.get();
+					ImGuizmo::SetDrawlist();
+					ImGuizmo::SetRect(ImGui::GetWindowPos().x + cursor.x, ImGui::GetWindowPos().y + cursor.y, static_cast<float>(mGBuffers.mSize.x), static_cast<float>(mGBuffers.mSize.y));
+					if (ImGuizmo::Manipulate(glm::value_ptr(mEngineShaderData.view), glm::value_ptr(mEngineShaderData.projection), ImGuizmo::OPERATION::TRANSLATE, ImGuizmo::MODE::LOCAL, glm::value_ptr(matrix))) {
+						mRegistry.get<GameObject>(mEditorSelected).mTransform.set(matrix);
+					}
+				}
+
 			}
 		}
-
-		if (mWireframe) {
-			glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-		}
-
-		bloomRenderer.render(mFboSize, mFboColor, mFilterRadius, aspectRatio);
-
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		glViewport(0, 0, mFboSize.x, mFboSize.y);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-
-		mShaderProgramComposite->bind();
-		mShaderProgramComposite->push_1f("uBlend", mBloomBlend);
-		mFboColor.bind(0);
-		bloomRenderer.mip_chain().bind(1);
-		glDrawArrays(GL_TRIANGLES, 0, 3);
+		ImGui::End();
 	}
 
 	void uninit() {
@@ -456,6 +502,8 @@ struct Application final {
 			ImGui_ImplGlfw_NewFrame();
 			ImGui::NewFrame();
 			ImGuizmo::BeginFrame();
+
+			ImGui::DockSpaceOverViewport();
 
 			if (ImGui::BeginMainMenuBar()) {
 				if (ImGui::BeginMenu("View")) {
@@ -523,18 +571,17 @@ struct Application final {
 			
 			update();
 
-			static entt::entity selected = entt::null;
-
+		
 			if (ImGui::Begin("Entities")) {
 				for (auto [entity, gameObject] : mRegistry.view<GameObject>().each()) {
 					ImGui::PushID(static_cast<int>(entity));
 
 					ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf;
-					if (entity == selected) flags |= ImGuiTreeNodeFlags_Selected;
+					if (entity == mEditorSelected) flags |= ImGuiTreeNodeFlags_Selected;
 					bool opened = ImGui::TreeNodeEx(gameObject.mName.c_str(), flags);
 
 					if (ImGui::IsItemActivated()) {
-						selected = entity;
+						mEditorSelected = entity;
 					}
 
 					if (opened) {
@@ -547,8 +594,8 @@ struct Application final {
 			ImGui::End();
 
 			if (ImGui::Begin("Properties")) {
-				if (selected != entt::null) {
-					GameObject& gameObject = mRegistry.get<GameObject>(selected);
+				if (mEditorSelected != entt::null) {
+					GameObject& gameObject = mRegistry.get<GameObject>(mEditorSelected);
 
 					if (ImGui::CollapsingHeader("GameObject")) {
 						ImGui::Checkbox("Enabled", &gameObject.mEnabled);
@@ -578,7 +625,7 @@ struct Application final {
 						}
 					}
 
-					if (auto* component = mRegistry.try_get<MeshRenderer>(selected)) {
+					if (auto* component = mRegistry.try_get<MeshRenderer>(mEditorSelected)) {
 						if (ImGui::CollapsingHeader("MeshRenderer")) {
 							ImGui::SeparatorText("Fields");
 
@@ -593,13 +640,10 @@ struct Application final {
 			}
 			ImGui::End();
 
-			if (selected != entt::null) {
-				glm::mat4 matrix = mRegistry.get<GameObject>(selected).mTransform.get();
-				ImGuizmo::SetRect(0, 0, static_cast<float>(mFramebufferSize.x), static_cast<float>(mFramebufferSize.y));
-				if (ImGuizmo::Manipulate(glm::value_ptr(mEngineShaderData.view), glm::value_ptr(mEngineShaderData.projection), ImGuizmo::OPERATION::TRANSLATE, ImGuizmo::MODE::LOCAL, glm::value_ptr(matrix))) {
-					mRegistry.get<GameObject>(selected).mTransform.set(matrix);
-				}
-			}
+			
+
+			glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
 			ImGui::Render();
 			ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -635,10 +679,7 @@ struct Application final {
 	glm::vec2 mCursorDelta{};
 
 	glm::ivec2 mFramebufferSize;
-	glm::ivec2 mFboSize{};
-	rvo::Texture mFboColor;
-	rvo::Renderbuffer mFboDepth;
-	rvo::Framebuffer mFbo;
+	GBuffers mGBuffers;
 
 	rvo::Buffer mEngineShaderBuffer;
 	EngineShaderData mEngineShaderData;
@@ -651,6 +692,7 @@ struct Application final {
 	bool mCursorLocked = false;
 	bool mVsync = true;
 	bool mWireframe = false;
+	entt::entity mEditorSelected = entt::null;
 
 	rvo::BloomRenderer bloomRenderer;
 

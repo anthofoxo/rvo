@@ -2,6 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <glm/gtc/integer.hpp>
+
 namespace rvo {
 	void BloomRenderer::init(rvo::AssetManager& aResourceManager) {
 		mFramebuffer = rvo::Framebuffer::CreateInfo{};
@@ -14,16 +16,15 @@ namespace rvo {
 
 	void BloomRenderer::render(glm::ivec2 aTargetSize, rvo::Texture& aSourceTexture, float aFilterRadius, float aAspectRatio) {
 		if (aTargetSize != mViewportSize) {
-			spdlog::debug("Bloom target size changed from {}x{} to {}x{}. Recreating mipchain now", mViewportSize.x, mViewportSize.y, aTargetSize.x, aTargetSize.y);
 			mViewportSize = aTargetSize;
-			constexpr auto numMips = 8;
+			auto numMips = glm::min(glm::log2(glm::max(mViewportSize.x / 2, mViewportSize.y / 2)) + 1, 8);
 
 			// Create new mipchain
 			mMipChain = { {
 				.levels = numMips,
 				.internalFormat = GL_R11F_G11F_B10F,
-				.width = mViewportSize.x / 2,
-				.height = mViewportSize.y / 2,
+				.width = glm::max(mViewportSize.x / 2, 1),
+				.height = glm::max(mViewportSize.y / 2, 1),
 				.minFilter = GL_LINEAR,
 				.magFilter = GL_LINEAR,
 				.wrap = GL_CLAMP_TO_EDGE,
