@@ -157,6 +157,15 @@ void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
 						}
 					}
 					lua_pop(L, 1);
+
+					if (lua_getfield(L, -1, "scale") == LUA_TTABLE && lua_rawlen(L, -1) == 3) {
+						for (int i = 0; i < 3; ++i) {
+							lua_rawgeti(L, -1, i + 1);
+							component.mTransform.scale[i] = static_cast<float>(lua_tonumber(L, -1));
+							lua_pop(L, 1);
+						}
+					}
+					lua_pop(L, 1);
 				}
 				lua_pop(L, 1);
 			}
@@ -231,7 +240,6 @@ struct GBuffers final {
 	void resize(glm::ivec2 const& aTargetSize) {
 		if (aTargetSize == mSize) return;
 
-		spdlog::debug("Viewport size changed from {}x{} to {}x{}. Recreating framebuffer", mSize.x, mSize.y, aTargetSize.x, aTargetSize.y);
 		mSize = aTargetSize;
 
 		mFbo = rvo::Framebuffer::CreateInfo{};
