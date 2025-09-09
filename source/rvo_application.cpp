@@ -7,6 +7,8 @@
 #include <misc/cpp/imgui_stdlib.h>
 #include <ImGuizmo.h>
 
+#include <lua.hpp>
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -201,79 +203,101 @@ struct Application final {
 
 		glBindBufferBase(GL_UNIFORM_BUFFER, 0, mEngineShaderBuffer.handle());
 
-		for (int x = 0; x < 20; ++x) {
-			for (int z = 0; z < 10; ++z) {
-				entt::handle entity = { mRegistry, mRegistry.create() };
-				auto& gameObject = entity.emplace<GameObject>();
-				auto& meshRenderer = entity.emplace<MeshRenderer>();
+		// Load scene
+		{
+			lua_State* L = luaL_newstate();
+			luaL_openlibs(L);
 
-				gameObject.mTransform.position.x = x * 3.0f - 30.0f;
-				gameObject.mTransform.position.z = z * 6.0f - 30.0f;
-
-				gameObject.mName = std::format("Minion {}_{}", x, z);
-				meshRenderer.mShaderProgram = mAssetManager.get_shader_program("shaders/opaque.glsl");
-
-				if ((x + z) % 2 == 0) {
-					meshRenderer.mMesh = mAssetManager.get_mesh("meshes/fox.ply");
-					meshRenderer.mTexture = mAssetManager.get_texture("textures/fox_a.png");
-				}
-				else {
-					meshRenderer.mMesh = mAssetManager.get_mesh("meshes/yeen.ply");
-					meshRenderer.mTexture = mAssetManager.get_texture("textures/yeen_a.png");
-				}
-				
+			if (luaL_dofile(L, "scene.lua") != LUA_OK) {
+				spdlog::error("Error while parsing scene: ", lua_tostring(L, -1));
+				lua_pop(L, 1);
 			}
-		}
+			else {
+				// Scene table at idx -1
 
-		{
-			entt::handle entity = { mRegistry, mRegistry.create() };
-			auto& gameObject = entity.emplace<GameObject>();
-			auto& meshRenderer = entity.emplace<MeshRenderer>();
+				lua_pushnil(L);
+				while (lua_next(L, -2)) {
+					entt::handle entity = { mRegistry, mRegistry.create() };
 
-			gameObject.mName = "Terrain";
-			meshRenderer.mShaderProgram = mAssetManager.get_shader_program("shaders/terrain.glsl");
-			meshRenderer.mMesh = mAssetManager.get_mesh("meshes/terrain.ply");
-			meshRenderer.mTexture = mAssetManager.get_texture("textures/grass.png");
-		}
+					/* uses 'key' (at index -2) and 'value' (at index -1) */
 
-		// Lights
-		{
-			entt::handle entity = { mRegistry, mRegistry.create() };
-			auto& gameObject = entity.emplace<GameObject>();
-			auto& meshRenderer = entity.emplace<MeshRenderer>();
+					if (lua_getfield(L, -1, "GameObject") == LUA_TTABLE) {
+						auto& component = entity.emplace<GameObject>();
 
-			gameObject.mName = "Blue Light";
-			gameObject.mTransform.position = { -8.0f, 5.0f, -20.0f };
+						if (lua_getfield(L, -1, "name") == LUA_TSTRING) {
+							component.mName = lua_tostring(L, -1);
+						}
+						lua_pop(L, 1);
 
-			meshRenderer.mShaderProgram = mAssetManager.get_shader_program("shaders/color.glsl");
-			meshRenderer.mMesh = mAssetManager.get_mesh("meshes/cube.ply");
-			meshRenderer.mFields["uColor"] = glm::vec3(0.0f, 0.05f, 1.0f) * 100.0f;
-		}
+						if (lua_getfield(L, -1, "transform") == LUA_TTABLE) {
+							if (lua_getfield(L, -1, "position") == LUA_TTABLE && lua_rawlen(L, -1) == 3) {
+								for (int i = 0; i < 3; ++i) {
+									lua_rawgeti(L, -1, i + 1);
+									component.mTransform.position[i] = lua_tonumber(L, -1);
+									lua_pop(L, 1);
+								}
+							}
+							lua_pop(L, 1);
+						}
+						lua_pop(L, 1);
+					}
+					lua_pop(L, 1);
 
-		{
-			entt::handle entity = { mRegistry, mRegistry.create() };
-			auto& gameObject = entity.emplace<GameObject>();
-			auto& meshRenderer = entity.emplace<MeshRenderer>();
+					if (lua_getfield(L, -1, "MeshRenderer") == LUA_TTABLE) {
+						auto& component = entity.emplace<MeshRenderer>();
 
-			gameObject.mName = "Red Light";
-			gameObject.mTransform.position = { -10.0f, 2.0f, 10.0f };
+						if (lua_getfield(L, -1, "shaderProgram") == LUA_TSTRING) {
+							component.mShaderProgram = mAssetManager.get_shader_program(lua_tostring(L, -1));
+						}
+						lua_pop(L, 1);
 
-			meshRenderer.mShaderProgram = mAssetManager.get_shader_program("shaders/color.glsl");
-			meshRenderer.mMesh = mAssetManager.get_mesh("meshes/cube.ply");
-			meshRenderer.mFields["uColor"] = glm::vec3(1.0f, 0.0f, 0.0f) * 100.0f;
-		}
+						if (lua_getfield(L, -1, "mesh") == LUA_TSTRING) {
+							component.mMesh = mAssetManager.get_mesh(lua_tostring(L, -1));
+						}
+						lua_pop(L, 1);
 
-		{
-			entt::handle entity = { mRegistry, mRegistry.create() };
-			auto& gameObject = entity.emplace<GameObject>();
-			auto& meshRenderer = entity.emplace<MeshRenderer>();
+						if (lua_getfield(L, -1, "texture") == LUA_TSTRING) {
+							component.mTexture = mAssetManager.get_texture(lua_tostring(L, -1));
+						}
+						lua_pop(L, 1);
 
-			gameObject.mName = "Green Light";
-			gameObject.mTransform.position = { 30.0f, 8.0f, 2.0f };
+						if (lua_getfield(L, -1, "fields") == LUA_TTABLE) {
+							lua_pushnil(L);
 
-			meshRenderer.mShaderProgram = mAssetManager.get_shader_program("shaders/color.glsl");
-			meshRenderer.mMesh = mAssetManager.get_mesh("meshes/cube.ply");
-			meshRenderer.mFields["uColor"] = glm::vec3(0.0f, 1.0f, 0.0f) * 100.0f;
+							while (lua_next(L, -2)) {
+								lua_pushvalue(L, -2);
+								std::string key = lua_tostring(L, -1);
+
+								// glm::vec3
+								if (lua_istable(L, -2) && lua_rawlen(L, -2) == 3) {
+									glm::vec3 value;
+
+									for (int i = 0; i < 3; ++i) {
+										lua_rawgeti(L, -2, i + 1);
+										value[i] = lua_tonumber(L, -1);
+										lua_pop(L, 1);
+									}
+
+									component.mFields[std::move(key)] = value;
+								}
+								else {
+									spdlog::warn("Unsupported field: {}", key);
+								}
+
+								lua_pop(L, 2);
+							}
+						}
+						lua_pop(L, 1);
+					}
+					lua_pop(L, 1);
+
+					lua_pop(L, 1);
+				}
+
+				lua_pop(L, 1); // Pop scene table
+			}
+
+			lua_close(L);
 		}
 	}
 

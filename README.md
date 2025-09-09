@@ -27,7 +27,8 @@ RVO includes all required dependencies and build files in the repo.
 * [glm 1.0.1](https://github.com/g-truc/glm/tree/1.0.1)
 * [spdlog v1.15.3](https://github.com/gabime/spdlog/tree/v1.15.3)
 * [EnTT v3.15.0](https://github.com/skypjack/entt/tree/v3.15.0)
-* [ImGuizmo 1.83](https://github.com/CedricGuillemet/ImGuizmo/tree/1.83)
+* [ImGuizmo eb90849](https://github.com/CedricGuillemet/ImGuizmo/tree/eb90849e6f0e24279357026c689e5eb5cd15723b)
+* [Lua 5.4.7](https://github.com/anthofoxo/lua/tree/5.4.7)
 ### Source Tree
 * [glad2](https://gen.glad.sh/)
 * [happly](https://github.com/nmwsharp/happly)
