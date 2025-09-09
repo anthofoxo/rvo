@@ -28,13 +28,15 @@ namespace rvo::rdoc {
 		if (gApi) gApi->LaunchReplayUI(1, nullptr);
 	}
 
-	void setup() {
+	void setup(bool aAttachOnLaunch) {
 #ifdef _WIN32
 		// Attach the renderdoc dll at startup if it isn't already
 		// This operation only works on windows, for unix systems renderdoc itself MUST spawn the application
-		if (GetModuleHandleA("renderdoc.dll") == nullptr) {
-			if (LoadLibraryA("C:/Program Files/RenderDoc/renderdoc.dll")) {
-				spdlog::info("Successfully attached renderdoc");
+		if (aAttachOnLaunch) {
+			if (GetModuleHandleA("renderdoc.dll") == nullptr) {
+				if (LoadLibraryA("C:/Program Files/RenderDoc/renderdoc.dll")) {
+					spdlog::info("Successfully attached renderdoc");
+				}
 			}
 		}
 #endif

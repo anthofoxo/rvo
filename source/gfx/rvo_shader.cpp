@@ -93,6 +93,7 @@ namespace rvo {
 		
 	ShaderProgram& ShaderProgram::operator=(ShaderProgram&& aOther) noexcept {
 		std::swap(mHandle, aOther.mHandle);
+		std::swap(mBackfaceCull, aOther.mBackfaceCull);
 		std::swap(mUniformLocations, aOther.mUniformLocations);
 		return *this;
 	}

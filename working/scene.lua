@@ -11,6 +11,16 @@ local sceneTable = {
     },
     {
         GameObject = {
+            name = "Pine",
+        },
+        MeshRenderer = {
+            shaderProgram = "shaders/cutout.glsl",
+            mesh = "meshes/pine.ply",
+            texture = "textures/pine.png",
+        },
+    },
+    {
+        GameObject = {
             name = "Blue Light",
             transform = {
                 position = { -8.0, 5.0, -20.0 },

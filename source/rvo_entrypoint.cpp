@@ -12,7 +12,7 @@ int main(int argc, char const* argv[]) {
 	spdlog::flush_every(5s);
 	spdlog::flush_on(spdlog::level::err);
 	spdlog::flush_on(spdlog::level::critical);
-	rvo::rdoc::setup();
+	rvo::rdoc::setup(true);
 	rvo::entrypoint();
 	spdlog::shutdown();
 }

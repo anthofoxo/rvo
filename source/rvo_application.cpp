@@ -123,6 +123,102 @@ struct EngineShaderData final {
 	alignas(16) glm::mat4 projection;
 };
 
+void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
+	lua_State* L = luaL_newstate();
+	luaL_openlibs(L);
+
+	if (luaL_dofile(L, "scene.lua") != LUA_OK) {
+		spdlog::error("Error while parsing scene: {}", lua_tostring(L, -1));
+		lua_pop(L, 1);
+	}
+	else {
+		// Scene table at idx -1
+
+		lua_pushnil(L);
+		while (lua_next(L, -2)) {
+			entt::handle entity = { aRegistry, aRegistry.create() };
+
+			/* uses 'key' (at index -2) and 'value' (at index -1) */
+
+			if (lua_getfield(L, -1, "GameObject") == LUA_TTABLE) {
+				auto& component = entity.emplace<GameObject>();
+
+				if (lua_getfield(L, -1, "name") == LUA_TSTRING) {
+					component.mName = lua_tostring(L, -1);
+				}
+				lua_pop(L, 1);
+
+				if (lua_getfield(L, -1, "transform") == LUA_TTABLE) {
+					if (lua_getfield(L, -1, "position") == LUA_TTABLE && lua_rawlen(L, -1) == 3) {
+						for (int i = 0; i < 3; ++i) {
+							lua_rawgeti(L, -1, i + 1);
+							component.mTransform.position[i] = static_cast<float>(lua_tonumber(L, -1));
+							lua_pop(L, 1);
+						}
+					}
+					lua_pop(L, 1);
+				}
+				lua_pop(L, 1);
+			}
+			lua_pop(L, 1);
+
+			if (lua_getfield(L, -1, "MeshRenderer") == LUA_TTABLE) {
+				auto& component = entity.emplace<MeshRenderer>();
+
+				if (lua_getfield(L, -1, "shaderProgram") == LUA_TSTRING) {
+					component.mShaderProgram = aAssetManager.get_shader_program(lua_tostring(L, -1));
+				}
+				lua_pop(L, 1);
+
+				if (lua_getfield(L, -1, "mesh") == LUA_TSTRING) {
+					component.mMesh = aAssetManager.get_mesh(lua_tostring(L, -1));
+				}
+				lua_pop(L, 1);
+
+				if (lua_getfield(L, -1, "texture") == LUA_TSTRING) {
+					component.mTexture = aAssetManager.get_texture(lua_tostring(L, -1));
+				}
+				lua_pop(L, 1);
+
+				if (lua_getfield(L, -1, "fields") == LUA_TTABLE) {
+					lua_pushnil(L);
+
+					while (lua_next(L, -2)) {
+						lua_pushvalue(L, -2);
+						std::string key = lua_tostring(L, -1);
+
+						// glm::vec3
+						if (lua_istable(L, -2) && lua_rawlen(L, -2) == 3) {
+							glm::vec3 value;
+
+							for (int i = 0; i < 3; ++i) {
+								lua_rawgeti(L, -2, i + 1);
+								value[i] = static_cast<float>(lua_tonumber(L, -1));
+								lua_pop(L, 1);
+							}
+
+							component.mFields[std::move(key)] = value;
+						}
+						else {
+							spdlog::warn("Unsupported field: {}", key);
+						}
+
+						lua_pop(L, 2);
+					}
+				}
+				lua_pop(L, 1);
+			}
+			lua_pop(L, 1);
+
+			lua_pop(L, 1);
+		}
+
+		lua_pop(L, 1); // Pop scene table
+	}
+
+	lua_close(L);
+}
+
 struct Application final {
 	void set_cursor_lock(bool aLocked) {
 		mCursorLocked = aLocked;
@@ -203,102 +299,7 @@ struct Application final {
 
 		glBindBufferBase(GL_UNIFORM_BUFFER, 0, mEngineShaderBuffer.handle());
 
-		// Load scene
-		{
-			lua_State* L = luaL_newstate();
-			luaL_openlibs(L);
-
-			if (luaL_dofile(L, "scene.lua") != LUA_OK) {
-				spdlog::error("Error while parsing scene: ", lua_tostring(L, -1));
-				lua_pop(L, 1);
-			}
-			else {
-				// Scene table at idx -1
-
-				lua_pushnil(L);
-				while (lua_next(L, -2)) {
-					entt::handle entity = { mRegistry, mRegistry.create() };
-
-					/* uses 'key' (at index -2) and 'value' (at index -1) */
-
-					if (lua_getfield(L, -1, "GameObject") == LUA_TTABLE) {
-						auto& component = entity.emplace<GameObject>();
-
-						if (lua_getfield(L, -1, "name") == LUA_TSTRING) {
-							component.mName = lua_tostring(L, -1);
-						}
-						lua_pop(L, 1);
-
-						if (lua_getfield(L, -1, "transform") == LUA_TTABLE) {
-							if (lua_getfield(L, -1, "position") == LUA_TTABLE && lua_rawlen(L, -1) == 3) {
-								for (int i = 0; i < 3; ++i) {
-									lua_rawgeti(L, -1, i + 1);
-									component.mTransform.position[i] = lua_tonumber(L, -1);
-									lua_pop(L, 1);
-								}
-							}
-							lua_pop(L, 1);
-						}
-						lua_pop(L, 1);
-					}
-					lua_pop(L, 1);
-
-					if (lua_getfield(L, -1, "MeshRenderer") == LUA_TTABLE) {
-						auto& component = entity.emplace<MeshRenderer>();
-
-						if (lua_getfield(L, -1, "shaderProgram") == LUA_TSTRING) {
-							component.mShaderProgram = mAssetManager.get_shader_program(lua_tostring(L, -1));
-						}
-						lua_pop(L, 1);
-
-						if (lua_getfield(L, -1, "mesh") == LUA_TSTRING) {
-							component.mMesh = mAssetManager.get_mesh(lua_tostring(L, -1));
-						}
-						lua_pop(L, 1);
-
-						if (lua_getfield(L, -1, "texture") == LUA_TSTRING) {
-							component.mTexture = mAssetManager.get_texture(lua_tostring(L, -1));
-						}
-						lua_pop(L, 1);
-
-						if (lua_getfield(L, -1, "fields") == LUA_TTABLE) {
-							lua_pushnil(L);
-
-							while (lua_next(L, -2)) {
-								lua_pushvalue(L, -2);
-								std::string key = lua_tostring(L, -1);
-
-								// glm::vec3
-								if (lua_istable(L, -2) && lua_rawlen(L, -2) == 3) {
-									glm::vec3 value;
-
-									for (int i = 0; i < 3; ++i) {
-										lua_rawgeti(L, -2, i + 1);
-										value[i] = lua_tonumber(L, -1);
-										lua_pop(L, 1);
-									}
-
-									component.mFields[std::move(key)] = value;
-								}
-								else {
-									spdlog::warn("Unsupported field: {}", key);
-								}
-
-								lua_pop(L, 2);
-							}
-						}
-						lua_pop(L, 1);
-					}
-					lua_pop(L, 1);
-
-					lua_pop(L, 1);
-				}
-
-				lua_pop(L, 1); // Pop scene table
-			}
-
-			lua_close(L);
-		}
+		load_scene(mRegistry, mAssetManager);
 	}
 
 	void update() {
@@ -380,6 +381,10 @@ struct Application final {
 		for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
 			if (!gameObject.mEnabled) continue;
 
+			if (!meshRenderer.mShaderProgram->mBackfaceCull) {
+				glDisable(GL_CULL_FACE);
+			}
+
 			meshRenderer.mShaderProgram->bind();
 			meshRenderer.mShaderProgram->push_mat4f("uTransform", gameObject.mTransform.get());
 
@@ -396,6 +401,10 @@ struct Application final {
 
 			if (meshRenderer.mTexture) meshRenderer.mTexture->bind(0);
 			meshRenderer.mMesh->render();
+
+			if (!meshRenderer.mShaderProgram->mBackfaceCull) {
+				glEnable(GL_CULL_FACE);
+			}
 		}
 
 		if (mWireframe) {
@@ -465,6 +474,16 @@ struct Application final {
 
 					if (ImGui::MenuItem("Launch Replay UI", nullptr, nullptr, rvo::rdoc::attached())) {
 						rvo::rdoc::launch_replay_ui();
+					}
+
+					ImGui::EndMenu();
+				}
+
+				if (ImGui::BeginMenu("Scene")) {
+
+					if (ImGui::MenuItem("Reload")) {
+						mRegistry.clear();
+						load_scene(mRegistry, mAssetManager);
 					}
 
 					ImGui::EndMenu();

@@ -6,6 +6,8 @@
 #define STB_INCLUDE_IMPLEMENTATION
 #include "stb_include.h"
 
+#include <regex>
+
 namespace rvo {
 	std::shared_ptr<rvo::ShaderProgram> AssetManager::get_shader_program(std::string_view aSource) {
 		auto it = mShaderPrograms.find(aSource);
@@ -13,6 +15,22 @@ namespace rvo {
 
 		auto optBytes = rvo::read_file_string(aSource);
 		if (!optBytes) return nullptr;
+
+		bool backfaceCulling = true;
+
+		{
+			std::regex pattern(R"(#\s*pragma\s+RVO_NO_BACKFACE_CULL)", std::regex::icase);
+
+			auto it = std::sregex_iterator(optBytes->begin(), optBytes->end(), pattern);
+			auto end = std::sregex_iterator();
+			std::size_t matchCount = std::distance(it, end);
+
+			*optBytes = std::regex_replace(*optBytes, pattern, "// $&");
+
+			if (matchCount > 0) {
+				backfaceCulling = false;
+			}
+		}
 
 		char error[256];
 		char* vertSource = stb_include_string(optBytes->c_str(), "#version 460 core\n#define RVO_VERT\n", "shaders/include", std::string(aSource).c_str(), error);
@@ -25,6 +43,9 @@ namespace rvo {
 		free(fragSource);
 
 		auto ref = std::make_shared<rvo::ShaderProgram>(rvo::ShaderProgram({ vert, frag }));
+
+		ref->mBackfaceCull = backfaceCulling;
+
 		mShaderPrograms[std::string(aSource)] = ref;
 		return ref;
 	}

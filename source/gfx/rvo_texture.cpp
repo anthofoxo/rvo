@@ -23,7 +23,7 @@ namespace rvo {
 
 		int const numLevels = glm::log2(glm::max(x, y)) + 1;
 
-		GLenum const internalFormat = aSrgb ? GL_SRGB8 : GL_RGBA8;
+		GLenum const internalFormat = aSrgb ? GL_SRGB8_ALPHA8 : GL_RGBA8;
 
 		Texture texture = { {
 				.levels = numLevels,

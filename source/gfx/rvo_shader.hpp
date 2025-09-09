@@ -62,6 +62,8 @@ namespace rvo {
 		GLint get_uniform_location(std::string_view aName) const;
 
 		GLuint handle() const noexcept { return mHandle; }
+	public:
+		bool mBackfaceCull = true;
 	private:
 		GLuint mHandle = 0;
 		rvo::UnorderedStringMap<GLint> mUniformLocations;
