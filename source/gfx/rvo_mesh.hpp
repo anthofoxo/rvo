@@ -25,7 +25,9 @@ namespace rvo {
 		Mesh& operator=(Mesh&& aOther) noexcept;
 		~Mesh() noexcept;
 
-		void render() const;
+		void bind() const;
+		void draw() const;
+		[[deprecated]] void render() const;
 
 	private:
 		GLuint mVao = 0;

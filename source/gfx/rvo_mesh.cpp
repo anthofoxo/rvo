@@ -89,8 +89,16 @@ namespace rvo {
 		if (mVao) glDeleteVertexArrays(1, &mVao);
 	}
 
-	void Mesh::render() const {
+	void Mesh::bind() const {
 		glBindVertexArray(mVao);
+	}
+
+	void Mesh::draw() const {
 		glDrawElements(GL_TRIANGLES, mCount, GL_UNSIGNED_INT, nullptr);
+	}
+
+	void Mesh::render() const {
+		bind();
+		draw();
 	}
 }

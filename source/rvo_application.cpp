@@ -111,11 +111,11 @@ struct GameObject final {
 	std::string mName = "Unnamed";
 };
 
+
+
 struct MeshRenderer final {
-	std::shared_ptr<rvo::ShaderProgram> mShaderProgram;
 	std::shared_ptr<rvo::Mesh> mMesh;
-	std::shared_ptr<rvo::Texture> mTexture;
-	std::unordered_map<std::string, std::any> mFields;
+	std::shared_ptr<rvo::Material> mMaterial;
 };
 
 struct EngineShaderData final {
@@ -174,46 +174,13 @@ void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
 			if (lua_getfield(L, -1, "MeshRenderer") == LUA_TTABLE) {
 				auto& component = entity.emplace<MeshRenderer>();
 
-				if (lua_getfield(L, -1, "shaderProgram") == LUA_TSTRING) {
-					component.mShaderProgram = aAssetManager.get_shader_program(lua_tostring(L, -1));
+				if (lua_getfield(L, -1, "material") == LUA_TSTRING) {
+					component.mMaterial = aAssetManager.get_material(lua_tostring(L, -1));
 				}
 				lua_pop(L, 1);
 
 				if (lua_getfield(L, -1, "mesh") == LUA_TSTRING) {
 					component.mMesh = aAssetManager.get_mesh(lua_tostring(L, -1));
-				}
-				lua_pop(L, 1);
-
-				if (lua_getfield(L, -1, "texture") == LUA_TSTRING) {
-					component.mTexture = aAssetManager.get_texture(lua_tostring(L, -1));
-				}
-				lua_pop(L, 1);
-
-				if (lua_getfield(L, -1, "fields") == LUA_TTABLE) {
-					lua_pushnil(L);
-
-					while (lua_next(L, -2)) {
-						lua_pushvalue(L, -2);
-						std::string key = lua_tostring(L, -1);
-
-						// glm::vec3
-						if (lua_istable(L, -2) && lua_rawlen(L, -2) == 3) {
-							glm::vec3 value;
-
-							for (int i = 0; i < 3; ++i) {
-								lua_rawgeti(L, -2, i + 1);
-								value[i] = static_cast<float>(lua_tonumber(L, -1));
-								lua_pop(L, 1);
-							}
-
-							component.mFields[std::move(key)] = value;
-						}
-						else {
-							spdlog::warn("Unsupported field: {}", key);
-						}
-
-						lua_pop(L, 2);
-					}
 				}
 				lua_pop(L, 1);
 			}
@@ -363,6 +330,8 @@ struct Application final {
 		load_scene(mRegistry, mAssetManager);
 	}
 
+	bool mUseFastRenderer = false;
+
 	void update() {
 		if (ImGui::Begin("Viewport")) {
 			ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -417,31 +386,79 @@ struct Application final {
 					glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 				}
 
+				struct MeshMaterialPairHash {
+					std::size_t operator()(const std::pair<std::shared_ptr<rvo::Mesh>, std::shared_ptr<rvo::Material>>& p) const {
+						auto h1 = std::hash<std::shared_ptr<rvo::Mesh>>{}(p.first);
+						auto h2 = std::hash<std::shared_ptr<rvo::Material>>{}(p.second);
+						return h1 ^ (h2 << 1); // combine hashes
+					}
+				};
+
+				std::unordered_map<std::pair<std::shared_ptr<rvo::Mesh>, std::shared_ptr<rvo::Material>>, std::vector<Transform>, MeshMaterialPairHash> entitiesSorted;
+
 				for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
 					if (!gameObject.mEnabled) continue;
+					if (!meshRenderer.mMaterial) continue;
+					if (!meshRenderer.mMaterial->mShaderProgram) continue;
+					if (!meshRenderer.mMesh) continue;
 
-					if (!meshRenderer.mShaderProgram->mBackfaceCull) {
-						glDisable(GL_CULL_FACE);
+					if (mUseFastRenderer) {
+						entitiesSorted[std::make_pair(meshRenderer.mMesh, meshRenderer.mMaterial)].push_back(gameObject.mTransform);
 					}
+					else {
 
-					meshRenderer.mShaderProgram->bind();
-					meshRenderer.mShaderProgram->push_mat4f("uTransform", gameObject.mTransform.get());
-
-					for (const auto& [key, field] : meshRenderer.mFields) {
-						if (auto const* value = std::any_cast<glm::vec3>(&field)) {
-							meshRenderer.mShaderProgram->push_3f(key, *value);
+						if (!meshRenderer.mMaterial->mShaderProgram->mBackfaceCull) {
+							glDisable(GL_CULL_FACE);
 						}
-						else {
-							spdlog::warn("Unsupported material field type `{}` on entity `{}`", field.type().name(), gameObject.mName);
-							gameObject.mEnabled = false;
+
+						meshRenderer.mMaterial->mShaderProgram->bind();
+						meshRenderer.mMaterial->mShaderProgram->push_mat4f("uTransform", gameObject.mTransform.get());
+
+						for (const auto& [key, field] : meshRenderer.mMaterial->mFields) {
+							if (auto const* value = std::any_cast<glm::vec3>(&field)) {
+								meshRenderer.mMaterial->mShaderProgram->push_3f(key, *value);
+							}
+							else {
+								spdlog::warn("Unsupported material field type `{}` on entity `{}`", field.type().name(), gameObject.mName);
+								gameObject.mEnabled = false;
+							}
+						}
+
+						if (meshRenderer.mMaterial->mTexture) meshRenderer.mMaterial->mTexture->bind(0);
+						meshRenderer.mMesh->render();
+
+						if (!meshRenderer.mMaterial->mShaderProgram->mBackfaceCull) {
+							glEnable(GL_CULL_FACE);
 						}
 					}
+				}
 
-					if (meshRenderer.mTexture) meshRenderer.mTexture->bind(0);
-					meshRenderer.mMesh->render();
+				if (mUseFastRenderer) {
+					for (auto const& [key, items] : entitiesSorted) {
+						auto const& [mesh, material] = key;
 
-					if (!meshRenderer.mShaderProgram->mBackfaceCull) {
-						glEnable(GL_CULL_FACE);
+						if (!material->mShaderProgram->mBackfaceCull) {
+							glDisable(GL_CULL_FACE);
+						}
+
+						mesh->bind();
+						material->mShaderProgram->bind();
+						if (material->mTexture) material->mTexture->bind(0);
+
+						for (const auto& [key, field] : material->mFields) {
+							if (auto const* value = std::any_cast<glm::vec3>(&field)) {
+								material->mShaderProgram->push_3f(key, *value);
+							}
+						}
+
+						for (auto& transform : items) {
+							material->mShaderProgram->push_mat4f("uTransform", transform.get());
+							mesh->draw();
+						}
+
+						if (!material->mShaderProgram->mBackfaceCull) {
+							glEnable(GL_CULL_FACE);
+						}
 					}
 				}
 
@@ -561,6 +578,8 @@ struct Application final {
 				}
 				ImGui::Checkbox("Wireframe", &mWireframe);
 				
+				ImGui::Checkbox("Fast Renderer", &mUseFastRenderer);
+
 				ImGui::LabelText("Cursor Pos", "%.1f x %.1f", mCursorPos.x, mCursorPos.y);
 				ImGui::LabelText("Cursor Delta", "%.1f x %.1f", mCursorDelta.x, mCursorDelta.y);
 
@@ -637,7 +656,7 @@ struct Application final {
 						if (ImGui::CollapsingHeader("MeshRenderer")) {
 							ImGui::SeparatorText("Fields");
 
-							for (auto& [key, field] : component->mFields) {
+							for (auto& [key, field] : component->mMaterial->mFields) {
 								if (auto* value = std::any_cast<glm::vec3>(&field)) {
 									ImGui::DragFloat3(key.c_str(), glm::value_ptr(*value));
 								}

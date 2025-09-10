@@ -7,6 +7,9 @@
 #include "stb_include.h"
 
 #include <regex>
+#include <spdlog/spdlog.h>
+
+#include <lua.hpp>
 
 namespace rvo {
 	std::shared_ptr<rvo::ShaderProgram> AssetManager::get_shader_program(std::string_view aSource) {
@@ -70,4 +73,65 @@ namespace rvo {
 		mTextures[std::string(aSource)] = ref;
 		return ref;
 	}
+
+	std::shared_ptr<rvo::Material> AssetManager::get_material(std::string_view aSource) {
+		auto it = mMaterials.find(aSource);
+		if (it != mMaterials.end()) return it->second;
+
+		lua_State* L = luaL_newstate();
+		luaL_openlibs(L);
+
+		if (luaL_dofile(L, std::string(aSource).c_str()) != LUA_OK) {
+			spdlog::warn("Failed to load material `{}`: {}", aSource, lua_tostring(L, -1));
+			lua_pop(L, 1);
+			return nullptr;
+		}
+
+		auto ref = std::make_shared<rvo::Material>();
+
+		if (lua_getfield(L, -1, "shaderProgram") == LUA_TSTRING) {
+			ref->mShaderProgram = get_shader_program(lua_tostring(L, -1));
+		}
+		lua_pop(L, 1);
+
+		if (lua_getfield(L, -1, "texture") == LUA_TSTRING) {
+			ref->mTexture = get_texture(lua_tostring(L, -1));
+		}
+		lua_pop(L, 1);
+
+		if (lua_getfield(L, -1, "fields") == LUA_TTABLE) {
+			lua_pushnil(L);
+
+			while (lua_next(L, -2)) {
+				lua_pushvalue(L, -2);
+				std::string key = lua_tostring(L, -1);
+
+				// glm::vec3
+				if (lua_istable(L, -2) && lua_rawlen(L, -2) == 3) {
+					glm::vec3 value;
+
+					for (int i = 0; i < 3; ++i) {
+						lua_rawgeti(L, -2, i + 1);
+						value[i] = static_cast<float>(lua_tonumber(L, -1));
+						lua_pop(L, 1);
+					}
+
+					ref->mFields[std::move(key)] = value;
+				}
+				else {
+					spdlog::warn("Unsupported field: {}", key);
+				}
+
+				lua_pop(L, 2);
+			}
+		}
+		lua_pop(L, 1);
+
+		lua_close(L);
+
+		mMaterials[std::string(aSource)] = ref;
+		return ref;
+	}
+
+	
 }
