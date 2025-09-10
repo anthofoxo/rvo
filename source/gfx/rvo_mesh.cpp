@@ -75,6 +75,15 @@ namespace rvo {
 		glVertexArrayAttribBinding(mVao, 1, 0);
 		glVertexArrayAttribBinding(mVao, 2, 0);
 		mCount = static_cast<GLsizei>(elements.size());
+
+		glVertexArrayVertexBuffer(mVao, 1, get_instanced_buffer(), 0, sizeof(glm::mat4));
+		glVertexArrayBindingDivisor(mVao, 1, 1);
+
+		for (int i = 12; i < 16; ++i) {
+			glEnableVertexArrayAttrib(mVao, i);
+			glVertexArrayAttribBinding(mVao, i, 1);
+			glVertexArrayAttribFormat(mVao, i, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4) * (i - 12));
+		}
 	}
 
 	Mesh& Mesh::operator=(Mesh&& aOther) noexcept {
@@ -93,8 +102,8 @@ namespace rvo {
 		glBindVertexArray(mVao);
 	}
 
-	void Mesh::draw() const {
-		glDrawElements(GL_TRIANGLES, mCount, GL_UNSIGNED_INT, nullptr);
+	void Mesh::draw(GLsizei instanceCount) const {
+		glDrawElementsInstanced(GL_TRIANGLES, mCount, GL_UNSIGNED_INT, nullptr, instanceCount);
 	}
 
 	void Mesh::render() const {

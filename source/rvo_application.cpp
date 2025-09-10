@@ -111,8 +111,6 @@ struct GameObject final {
 	std::string mName = "Unnamed";
 };
 
-
-
 struct MeshRenderer final {
 	std::shared_ptr<rvo::Mesh> mMesh;
 	std::shared_ptr<rvo::Material> mMaterial;
@@ -247,6 +245,28 @@ struct GBuffers final {
 	}
 };
 
+struct InstanceRendererData {
+	rvo::Buffer mBuffer;
+	std::size_t mInstancesPerDraw;
+
+	void init(std::size_t aInstancesPerDraw) {
+		mInstancesPerDraw = aInstancesPerDraw;
+
+		mBuffer = { {
+				.data = std::span(static_cast<std::byte const*>(nullptr), aInstancesPerDraw * sizeof(glm::mat4)),
+				.flags = GL_MAP_WRITE_BIT,
+			} };
+	}
+
+	std::span<glm::mat4> begin(GLsizeiptr numInstances) {
+		return std::span(static_cast<glm::mat4*>(glMapNamedBufferRange(mBuffer.handle(), 0, numInstances * sizeof(glm::mat4), GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT)), mInstancesPerDraw);
+	}
+
+	void finish() {
+		glUnmapNamedBuffer(mBuffer.handle());
+	}
+};
+
 struct Application final {
 	void set_cursor_lock(bool aLocked) {
 		mCursorLocked = aLocked;
@@ -327,10 +347,12 @@ struct Application final {
 
 		glBindBufferBase(GL_UNIFORM_BUFFER, 0, mEngineShaderBuffer.handle());
 
-		load_scene(mRegistry, mAssetManager);
-	}
+		mInstanceRendererData.init(1024);
 
-	bool mUseFastRenderer = false;
+		load_scene(mRegistry, mAssetManager);
+
+		
+	}
 
 	void update() {
 		if (ImGui::Begin("Viewport")) {
@@ -394,7 +416,8 @@ struct Application final {
 					}
 				};
 
-				std::unordered_map<std::pair<std::shared_ptr<rvo::Mesh>, std::shared_ptr<rvo::Material>>, std::vector<Transform>, MeshMaterialPairHash> entitiesSorted;
+				static std::unordered_map<std::pair<std::shared_ptr<rvo::Mesh>, std::shared_ptr<rvo::Material>>, std::vector<Transform>, MeshMaterialPairHash> entitiesSorted;
+				entitiesSorted.clear();
 
 				for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
 					if (!gameObject.mEnabled) continue;
@@ -402,63 +425,49 @@ struct Application final {
 					if (!meshRenderer.mMaterial->mShaderProgram) continue;
 					if (!meshRenderer.mMesh) continue;
 
-					if (mUseFastRenderer) {
-						entitiesSorted[std::make_pair(meshRenderer.mMesh, meshRenderer.mMaterial)].push_back(gameObject.mTransform);
-					}
-					else {
-
-						if (!meshRenderer.mMaterial->mShaderProgram->mBackfaceCull) {
-							glDisable(GL_CULL_FACE);
-						}
-
-						meshRenderer.mMaterial->mShaderProgram->bind();
-						meshRenderer.mMaterial->mShaderProgram->push_mat4f("uTransform", gameObject.mTransform.get());
-
-						for (const auto& [key, field] : meshRenderer.mMaterial->mFields) {
-							if (auto const* value = std::any_cast<glm::vec3>(&field)) {
-								meshRenderer.mMaterial->mShaderProgram->push_3f(key, *value);
-							}
-							else {
-								spdlog::warn("Unsupported material field type `{}` on entity `{}`", field.type().name(), gameObject.mName);
-								gameObject.mEnabled = false;
-							}
-						}
-
-						if (meshRenderer.mMaterial->mTexture) meshRenderer.mMaterial->mTexture->bind(0);
-						meshRenderer.mMesh->render();
-
-						if (!meshRenderer.mMaterial->mShaderProgram->mBackfaceCull) {
-							glEnable(GL_CULL_FACE);
-						}
-					}
+					entitiesSorted[std::make_pair(meshRenderer.mMesh, meshRenderer.mMaterial)].push_back(gameObject.mTransform);
 				}
 
-				if (mUseFastRenderer) {
-					for (auto const& [key, items] : entitiesSorted) {
-						auto const& [mesh, material] = key;
+				for (auto const& [key, items] : entitiesSorted) {
+					auto const& [mesh, material] = key;
 
-						if (!material->mShaderProgram->mBackfaceCull) {
-							glDisable(GL_CULL_FACE);
+					if (!material->mShaderProgram->mBackfaceCull) {
+						glDisable(GL_CULL_FACE);
+					}
+
+					mesh->bind();
+					material->mShaderProgram->bind();
+					if (material->mTexture) material->mTexture->bind(0);
+
+					for (const auto& [key, field] : material->mFields) {
+						if (auto const* value = std::any_cast<glm::vec3>(&field)) {
+							material->mShaderProgram->push_3f(key, *value);
+						}
+					}
+
+					std::size_t remainingItems = items.size();
+					std::size_t idx = 0;
+
+					while (remainingItems > 0) {
+						std::size_t numElementsThisDraw = glm::min(remainingItems, mInstanceRendererData.mInstancesPerDraw);
+
+						auto data = mInstanceRendererData.begin(numElementsThisDraw);
+
+						for (std::size_t i = 0; i < numElementsThisDraw; ++i) {
+							data[i] = items[idx + i].get();
 						}
 
-						mesh->bind();
-						material->mShaderProgram->bind();
-						if (material->mTexture) material->mTexture->bind(0);
+						mInstanceRendererData.finish();
 
-						for (const auto& [key, field] : material->mFields) {
-							if (auto const* value = std::any_cast<glm::vec3>(&field)) {
-								material->mShaderProgram->push_3f(key, *value);
-							}
-						}
+						idx += numElementsThisDraw;
+						remainingItems -= numElementsThisDraw;
 
-						for (auto& transform : items) {
-							material->mShaderProgram->push_mat4f("uTransform", transform.get());
-							mesh->draw();
-						}
+						mesh->draw(numElementsThisDraw);
 
-						if (!material->mShaderProgram->mBackfaceCull) {
-							glEnable(GL_CULL_FACE);
-						}
+					}
+						
+					if (!material->mShaderProgram->mBackfaceCull) {
+						glEnable(GL_CULL_FACE);
 					}
 				}
 
@@ -577,8 +586,17 @@ struct Application final {
 					glfwSwapInterval(mVsync ? 1 : 0);
 				}
 				ImGui::Checkbox("Wireframe", &mWireframe);
-				
-				ImGui::Checkbox("Fast Renderer", &mUseFastRenderer);
+
+				std::size_t min = 1;
+				std::size_t max = 100000;
+				if (ImGui::DragScalar("Max Instance Grouping", ImGuiDataType_U64, &mInstanceRendererData.mInstancesPerDraw, 1.0f, &min, &max)) {
+					mInstanceRendererData.init(mInstanceRendererData.mInstancesPerDraw);
+
+					for (auto& [key, value] : mAssetManager.mMeshes) {
+						glVertexArrayVertexBuffer(value->vao(), 1, mInstanceRendererData.mBuffer.handle(), 0, sizeof(glm::mat4));
+					}
+
+				}
 
 				ImGui::LabelText("Cursor Pos", "%.1f x %.1f", mCursorPos.x, mCursorPos.y);
 				ImGui::LabelText("Cursor Delta", "%.1f x %.1f", mCursorDelta.x, mCursorDelta.y);
@@ -721,14 +739,29 @@ struct Application final {
 	bool mWireframe = false;
 	entt::entity mEditorSelected = entt::null;
 
+	InstanceRendererData mInstanceRendererData;
+
 	rvo::BloomRenderer bloomRenderer;
 
 	std::shared_ptr<rvo::ShaderProgram> mShaderProgramComposite;
 };
 
+Application* gApp;
+
+
+
+namespace rvo {
+
+	GLuint get_instanced_buffer() {
+		return gApp->mInstanceRendererData.mBuffer.handle();
+	}
+}
+
+
 namespace rvo {
 	void entrypoint() {
 		Application app;
+		gApp = &app;
 		app.run();
 	}
 }

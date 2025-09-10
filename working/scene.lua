@@ -10,15 +10,6 @@ local sceneTable = {
     },
     {
         GameObject = {
-            name = "Pine",
-        },
-        MeshRenderer = {
-            mesh = "meshes/pine.ply",
-            material = "materials/pine.lua",
-        },
-    },
-    {
-        GameObject = {
             name = "Blue Light",
             transform = {
                 position = { -8.0, 5.0, -20.0 },
@@ -56,6 +47,26 @@ local sceneTable = {
 }
 
 local x, z
+
+for x = 0, 10 do
+    for z = 0, 10 do
+        local scaleFactor = math.random(80, 120) / 100.0
+         table.insert(sceneTable, {
+            GameObject = {
+                name = "Tree " .. x .. "_" .. z,
+
+                transform = {
+                    position = { x * 20.0 - 100.0 + math.random(-5, 5), 0.0, z * 20.0 - 100.0 + math.random(-5, 5)},
+                    scale = { scaleFactor, scaleFactor, scaleFactor }
+                },
+            },
+            MeshRenderer = {
+                mesh = "meshes/pine.ply",
+                material = "materials/pine.lua",
+            },
+        })
+    end
+end
 
 for x = 0, 20 do
     for z = 0, 10 do

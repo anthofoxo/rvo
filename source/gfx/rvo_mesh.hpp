@@ -8,6 +8,8 @@
 #include <utility>
 
 namespace rvo {
+	GLuint get_instanced_buffer();
+
 	struct StandardVertex final {
 		glm::vec3 position;
 		glm::vec3 normal;
@@ -26,8 +28,10 @@ namespace rvo {
 		~Mesh() noexcept;
 
 		void bind() const;
-		void draw() const;
+		void draw(GLsizei aInstanceCount = 1) const;
 		[[deprecated]] void render() const;
+
+		GLuint vao() const noexcept { return mVao; }
 
 	private:
 		GLuint mVao = 0;

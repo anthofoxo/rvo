@@ -15,7 +15,7 @@ namespace rvo {
 		std::shared_ptr<rvo::Mesh> get_mesh(std::string_view aSource);
 		std::shared_ptr<rvo::Texture> get_texture(std::string_view aSource);
 		std::shared_ptr<rvo::Material> get_material(std::string_view aSource);
-	private:
+	public:
 		rvo::UnorderedStringMap<std::shared_ptr<rvo::ShaderProgram>> mShaderPrograms;
 		rvo::UnorderedStringMap<std::shared_ptr<rvo::Mesh>> mMeshes;
 		rvo::UnorderedStringMap<std::shared_ptr<rvo::Texture>> mTextures;

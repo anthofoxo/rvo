@@ -8,7 +8,7 @@ layout(location = 0) in vec3 iPosition;
 layout(location = 1) in vec3 iNormal;
 layout(location = 2) in vec2 iTexCoord;
 
-uniform mat4 uTransform;
+layout(location = 12) in mat4 uTransform;
 
 void main(void) {
     gl_Position = gProjection * gView * uTransform * vec4(iPosition, 1.0);
