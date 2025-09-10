@@ -437,6 +437,7 @@ struct Application final {
 
 					mesh->bind();
 					material->mShaderProgram->bind();
+					material->mShaderProgram->push_1f("uTime", static_cast<float>(mCurrentTime));
 					if (material->mTexture) material->mTexture->bind(0);
 
 					for (const auto& [key, field] : material->mFields) {

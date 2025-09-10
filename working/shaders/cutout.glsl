@@ -15,15 +15,36 @@ out vec3 vNormal;
 
 layout(location = 12) in mat4 uTransform;
 
+uniform float uTime;
+
+out float vVisibility;
+
 void main(void) {
-    gl_Position = gProjection * gView * uTransform * vec4(iPosition, 1.0);
+    vec4 worldSpace = uTransform * vec4(iPosition, 1.0);
+    worldSpace.x += sin(uTime + worldSpace.x) * 0.1;
+    worldSpace.y += cos(uTime + worldSpace.z + worldSpace.z) * 0.1;
+    worldSpace.z += (sin(uTime + worldSpace.z) * 0.5 + cos(worldSpace.z + uTime)) * 0.1;
+
+    vec4 eyeSpace = gView * worldSpace;
+
+    gl_Position = gProjection * eyeSpace;
     vTexCoord = iTexCoord;
     vNormal = mat3(uTransform) * iNormal;
+
+    float kDensity = 0.007;
+    float kGradient = 1.5;
+
+    float dist = length(eyeSpace.xyz);
+    vVisibility= clamp(exp(-pow(dist * kDensity, kGradient)), 0.0, 1.0);
+
+    
 }
 
 #endif
 
 #ifdef RVO_FRAG
+
+in float vVisibility;
 
 in vec2 vTexCoord;
 in vec3 vNormal;
@@ -43,6 +64,8 @@ void main(void) {
     }
 
     oColor.rgb *= max(0.2, dot(surfaceNormal, vec3(0.0, 1.0, 0.0)));
+
+    oColor.rgb = mix(vec3(pow(0.7, 2.2), pow(0.8, 2.2), pow(0.9, 2.2)), oColor.rgb, vVisibility);
 }
 
 #endif
