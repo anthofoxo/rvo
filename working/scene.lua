@@ -4,9 +4,8 @@ local sceneTable = {
             name = "Terrain",
         },
         MeshRenderer = {
-            shaderProgram = "shaders/terrain.glsl",
             mesh = "meshes/terrain.ply",
-            texture = "textures/grass.png",
+            material = "materials/terrain.lua",
         },
     },
     {
@@ -14,9 +13,8 @@ local sceneTable = {
             name = "Pine",
         },
         MeshRenderer = {
-            shaderProgram = "shaders/cutout.glsl",
             mesh = "meshes/pine.ply",
-            texture = "textures/pine.png",
+            material = "materials/pine.lua",
         },
     },
     {
@@ -27,11 +25,8 @@ local sceneTable = {
             },
         },
         MeshRenderer = {
-            shaderProgram = "shaders/color.glsl",
             mesh = "meshes/cube.ply",
-            fields = {
-                uColor = { 0.0, 5.0, 100.0 },
-            }
+            material = "materials/light_blue.lua",
         },
     },
     {
@@ -42,11 +37,8 @@ local sceneTable = {
             },
         },
         MeshRenderer = {
-            shaderProgram = "shaders/color.glsl",
             mesh = "meshes/cube.ply",
-            fields = {
-                uColor = { 100.0, 0.0, 0.0 },
-            }
+            material = "materials/light_red.lua",
         },
     },
     {
@@ -57,11 +49,8 @@ local sceneTable = {
             },
         },
         MeshRenderer = {
-            shaderProgram = "shaders/color.glsl",
             mesh = "meshes/cube.ply",
-            fields = {
-                uColor = { 0.0, 100.0, 0.0 },
-            }
+            material = "materials/light_green.lua",
         },
     },
 }
@@ -70,14 +59,14 @@ local x, z
 
 for x = 0, 20 do
     for z = 0, 10 do
-        local mesh, texture
+        local mesh, material
 
         if (x + z) % 2 == 0 then
             mesh = "meshes/fox.ply"
-            texture = "textures/fox_a.png"
+            material = "materials/fox.lua"
         else
             mesh = "meshes/yeen.ply"
-            texture = "textures/yeen_a.png"
+            material = "materials/yeen.lua"
         end
 
         table.insert(sceneTable, {
@@ -89,9 +78,8 @@ for x = 0, 20 do
                 },
             },
             MeshRenderer = {
-                shaderProgram = "shaders/opaque.glsl",
                 mesh = mesh,
-                texture = texture,
+                material = material,
             },
         })
     end
