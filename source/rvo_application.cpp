@@ -119,6 +119,8 @@ struct MeshRenderer final {
 struct EngineShaderData final {
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 projection;
+	alignas(4)  float farPlane;
+	alignas(4)  float time;
 };
 
 void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
@@ -195,9 +197,13 @@ void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
 
 struct GBuffers final {
 	glm::ivec2 mSize{};
-	rvo::Texture mFboColor;
-	rvo::Renderbuffer mFboDepth;
+	rvo::Texture mFboAlbedo;
+	rvo::Texture mFboNormal;
+	rvo::Texture mFboDepth;
 	rvo::Framebuffer mFbo;
+
+	rvo::Framebuffer mFboMixed;
+	rvo::Texture mFboMixedColor;
 
 	rvo::Texture mFboFinalColor;
 	rvo::Framebuffer mFboFinal;
@@ -209,7 +215,7 @@ struct GBuffers final {
 
 		mFbo = rvo::Framebuffer::CreateInfo{};
 
-		mFboColor = { {
+		mFboAlbedo = { {
 			.levels = 1,
 			.internalFormat = GL_R11F_G11F_B10F,
 			.width = mSize.x,
@@ -220,14 +226,47 @@ struct GBuffers final {
 			.anisotropy = 1.0f,
 		} };
 
-		mFboDepth = { {
-				.internalFormat = GL_DEPTH_COMPONENT32F,
-				.width = mSize.x,
-				.height = mSize.y,
-			} };
+		mFboNormal = { {
+			.levels = 1,
+			.internalFormat = GL_RGBA16F,
+			.width = mSize.x,
+			.height = mSize.y,
+			.minFilter = GL_LINEAR,
+			.magFilter = GL_LINEAR,
+			.wrap = GL_CLAMP_TO_EDGE,
+			.anisotropy = 1.0f,
+		} };
 
-		glNamedFramebufferTexture(mFbo.handle(), GL_COLOR_ATTACHMENT0, mFboColor.handle(), 0);
-		glNamedFramebufferRenderbuffer(mFbo.handle(), GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, mFboDepth.handle());
+		mFboDepth = { {
+			.levels = 1,
+			.internalFormat = GL_DEPTH_COMPONENT32F,
+			.width = mSize.x,
+			.height = mSize.y,
+			.minFilter = GL_LINEAR,
+			.magFilter = GL_LINEAR,
+			.wrap = GL_CLAMP_TO_EDGE,
+			.anisotropy = 1.0f,
+		} };
+
+		glNamedFramebufferTexture(mFbo.handle(), GL_COLOR_ATTACHMENT0, mFboAlbedo.handle(), 0);
+		glNamedFramebufferTexture(mFbo.handle(), GL_COLOR_ATTACHMENT1, mFboNormal.handle(), 0);
+		glNamedFramebufferTexture(mFbo.handle(), GL_DEPTH_ATTACHMENT, mFboDepth.handle(), 0);
+		GLenum bufs[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+		glNamedFramebufferDrawBuffers(mFbo.handle(), 2, bufs);
+
+		mFboMixed = rvo::Framebuffer::CreateInfo{};
+		mFboMixedColor = { {
+			.levels = 1,
+			.internalFormat = GL_RGBA16F,
+			.width = mSize.x,
+			.height = mSize.y,
+			.minFilter = GL_LINEAR,
+			.magFilter = GL_LINEAR,
+			.wrap = GL_CLAMP_TO_EDGE,
+			.anisotropy = 1.0f,
+		} };
+
+		glNamedFramebufferTexture(mFboMixed.handle(), GL_COLOR_ATTACHMENT0, mFboMixedColor.handle(), 0);
 
 		mFboFinalColor = { {
 				.levels = 1,
@@ -335,6 +374,7 @@ struct Application final {
 		spdlog::info("GL_SHADING_LANGUAGE_VERSION: {}", reinterpret_cast<char const*>(glGetString(GL_SHADING_LANGUAGE_VERSION)));
 
 		mShaderProgramComposite = mAssetManager.get_shader_program("shaders/composite.glsl");
+		mShaderProgramMix = mAssetManager.get_shader_program("shaders/mix.glsl");
 
 		bloomRenderer.init(mAssetManager);
 
@@ -394,6 +434,8 @@ struct Application final {
 				float const aspectRatio = static_cast<float>(mGBuffers.mSize.x) / static_cast<float>(mGBuffers.mSize.y);
 				float const targetFov = mKeysDown.contains(GLFW_KEY_C) ? mFieldOfView / 4.0f : mFieldOfView;
 
+				mEngineShaderData.farPlane = mFarPlane;
+				mEngineShaderData.time = static_cast<float>(mCurrentTime);
 				mEngineShaderData.projection = glm::perspective(glm::radians(targetFov), aspectRatio, mNearPlane, mFarPlane);
 				mEngineShaderData.view = glm::inverse(mCameraTransform.get());
 				glNamedBufferSubData(mEngineShaderBuffer.handle(), 0, sizeof(EngineShaderData), &mEngineShaderData);
@@ -401,7 +443,7 @@ struct Application final {
 				mGBuffers.mFbo.bind();
 				glViewport(0, 0, mGBuffers.mSize.x, mGBuffers.mSize.y);
 
-				glClearColor(glm::pow(0.7f, 2.2f), glm::pow(0.8f, 2.2f), glm::pow(0.9f, 2.2f), 1.0f);
+				glClearColor(0, 0, 0, 0);
 				glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 				if (mWireframe) {
@@ -437,7 +479,6 @@ struct Application final {
 
 					mesh->bind();
 					material->mShaderProgram->bind();
-					material->mShaderProgram->push_1f("uTime", static_cast<float>(mCurrentTime));
 					if (material->mTexture) material->mTexture->bind(0);
 
 					for (const auto& [key, field] : material->mFields) {
@@ -476,14 +517,23 @@ struct Application final {
 					glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 				}
 
-				bloomRenderer.render(mGBuffers.mSize, mGBuffers.mFboColor, mFilterRadius, aspectRatio);
+				// Data is now inside gbuffers, perform composite pass
+
+				mGBuffers.mFboMixed.bind();
+				mGBuffers.mFboAlbedo.bind(0);
+				mGBuffers.mFboNormal.bind(1);
+				mGBuffers.mFboDepth.bind(2);
+				mShaderProgramMix->bind();
+				glDrawArrays(GL_TRIANGLES, 0, 3);
+
+				bloomRenderer.render(mGBuffers.mSize, mGBuffers.mFboMixedColor, mFilterRadius, aspectRatio);
 
 				mGBuffers.mFboFinal.bind();
 				glViewport(0, 0, mGBuffers.mSize.x, mGBuffers.mSize.y);
 
 				mShaderProgramComposite->bind();
 				mShaderProgramComposite->push_1f("uBlend", mBloomBlend);
-				mGBuffers.mFboColor.bind(0);
+				mGBuffers.mFboMixedColor.bind(0);
 				bloomRenderer.mip_chain().bind(1);
 				glDrawArrays(GL_TRIANGLES, 0, 3);
 
@@ -745,6 +795,7 @@ struct Application final {
 	rvo::BloomRenderer bloomRenderer;
 
 	std::shared_ptr<rvo::ShaderProgram> mShaderProgramComposite;
+	std::shared_ptr<rvo::ShaderProgram> mShaderProgramMix;
 };
 
 Application* gApp;
