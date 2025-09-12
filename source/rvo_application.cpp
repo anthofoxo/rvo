@@ -16,15 +16,19 @@
 #include <glm/gtc/integer.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <spdlog/spdlog.h>
 
+#include "rvo_components.hpp"
+#include "rvo_gui_panels.hpp"
 #include "rvo_window.hpp"
 #include "rvo_utility.hpp"
 #include "rvo_gfx.hpp"
 #include "rvo_renderer_bloom.hpp"
 #include "rvo_rdoc.hpp"
 #include "rvo_asset_manager.hpp"
+#include "rvo_transform.hpp"
 
 #include <entt/entt.hpp>
 
@@ -33,6 +37,7 @@
 #include <filesystem>
 #include <unordered_set>
 #include <any>
+
 
 void imgui_init(GLFWwindow *aWindow) {
 #ifdef _DEBUG
@@ -83,46 +88,6 @@ void configure_khr_debug() {
 	glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DEBUG_SEVERITY_NOTIFICATION, 0, nullptr, GL_FALSE);
 }
 
-struct Transform final {
-	glm::vec3 position = { 0.0f, 0.0f, 0.0f };
-	glm::quat orientation = glm::identity<glm::quat>();
-	glm::vec3 scale = { 1.0f, 1.0f, 1.0f };
-	
-	glm::mat4 get() const {
-		constexpr glm::vec3 skew = { 0.0f, 0.0f, 0.0f };
-		constexpr glm::vec4 perspective = { 0.0f, 0.0f, 0.0f, 1.0f };
-		return glm::recompose(scale, orientation, position, skew, perspective);
-	}
-
-	void set(glm::mat4 const& matrix) {
-		glm::vec3 skew;
-		glm::vec4 perspective;
-		glm::decompose(matrix, scale, orientation, position, skew, perspective);
-	}
-
-	void translate(glm::vec3 const& aValue) {
-		glm::mat4 const result = glm::translate(get(), aValue);
-		position = result[3];
-	}
-
-	glm::vec3 forward() const { return orientation * glm::vec3(0.0f, 0.0f, -1.0f); }
-};
-
-struct GameObject final {
-	bool mEnabled = true;
-	Transform mTransform;
-	std::string mName = "Unnamed";
-};
-
-struct MeshRenderer final {
-	std::shared_ptr<rvo::Mesh> mMesh;
-	std::shared_ptr<rvo::Material> mMaterial;
-};
-
-struct DirectionalLight final {
-	glm::vec3 color;
-};
-
 struct EngineShaderData final {
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 projection;
@@ -154,12 +119,12 @@ void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
 	// auto create sun
 	{
 		entt::handle entity = { aRegistry, aRegistry.create() };
-		auto& gameObject = entity.emplace<GameObject>();
+		auto& gameObject = entity.emplace<rvo::GameObject>();
 		gameObject.mName = "Sun";
 		gameObject.mTransform.position = { 0.0f, 10.0f, 0.0f };
 		gameObject.mTransform.orientation = quatLookAt(glm::vec3(0.0f, -1.0f, 0.0f));
 
-		auto& directionalLight = entity.emplace<DirectionalLight>();
+		auto& directionalLight = entity.emplace<rvo::DirectionalLight>();
 		directionalLight.color = glm::vec3(1.0f);
 	}
 
@@ -180,7 +145,7 @@ void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
 			/* uses 'key' (at index -2) and 'value' (at index -1) */
 
 			if (lua_getfield(L, -1, "GameObject") == LUA_TTABLE) {
-				auto& component = entity.emplace<GameObject>();
+				auto& component = entity.emplace<rvo::GameObject>();
 
 				if (lua_getfield(L, -1, "name") == LUA_TSTRING) {
 					component.mName = lua_tostring(L, -1);
@@ -211,7 +176,7 @@ void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
 			lua_pop(L, 1);
 
 			if (lua_getfield(L, -1, "MeshRenderer") == LUA_TTABLE) {
-				auto& component = entity.emplace<MeshRenderer>();
+				auto& component = entity.emplace<rvo::MeshRenderer>();
 
 				if (lua_getfield(L, -1, "material") == LUA_TSTRING) {
 					component.mMaterial = aAssetManager.get_material(lua_tostring(L, -1));
@@ -429,8 +394,6 @@ struct Application final {
 		mInstanceRendererData.init(1024);
 
 		load_scene(mRegistry, mAssetManager);
-
-		
 	}
 
 	void update() {
@@ -474,9 +437,9 @@ struct Application final {
 				float const aspectRatio = static_cast<float>(mGBuffers.mSize.x) / static_cast<float>(mGBuffers.mSize.y);
 				float const targetFov = mKeysDown.contains(GLFW_KEY_C) ? mFieldOfView / 4.0f : mFieldOfView;
 
-				mEngineShaderData.farPlane = mFarPlane;
+				mEngineShaderData.farPlane = mClippingPlanes[1];
 				mEngineShaderData.time = static_cast<float>(mCurrentTime);
-				mEngineShaderData.projection = glm::perspective(glm::radians(targetFov), aspectRatio, mNearPlane, mFarPlane);
+				mEngineShaderData.projection = glm::perspective(glm::radians(targetFov), aspectRatio, mClippingPlanes[0], mClippingPlanes[1]);
 				mEngineShaderData.view = glm::inverse(mCameraTransform.get());
 				glNamedBufferSubData(mEngineShaderBuffer.handle(), 0, sizeof(EngineShaderData), &mEngineShaderData);
 
@@ -498,7 +461,7 @@ struct Application final {
 					}
 				};
 
-				static std::unordered_map<std::pair<std::shared_ptr<rvo::Mesh>, std::shared_ptr<rvo::Material>>, std::vector<Transform>, MeshMaterialPairHash> entitiesSorted;
+				static std::unordered_map<std::pair<std::shared_ptr<rvo::Mesh>, std::shared_ptr<rvo::Material>>, std::vector<rvo::Transform>, MeshMaterialPairHash> entitiesSorted;
 				entitiesSorted.clear();
 
 				// Find sun, and set sun direction to match its direction
@@ -506,7 +469,7 @@ struct Application final {
 					// Default case is to point down if no sun object is found
 					mEngineShaderData.sunDirection = glm::vec3(0.0f, -1.0f, 0.0f);
 
-					for (auto [entity, gameObject, directionalLight] : mRegistry.view<GameObject, DirectionalLight>().each()) {
+					for (auto [entity, gameObject, directionalLight] : mRegistry.view<rvo::GameObject, rvo::DirectionalLight>().each()) {
 						if (!gameObject.mEnabled) continue;
 						
 						mEngineShaderData.sunDirection = gameObject.mTransform.forward();
@@ -517,7 +480,7 @@ struct Application final {
 				mDebugInfo.numBatches = 0;
 				mDebugInfo.numEntities = 0;
 
-				for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
+				for (auto [entity, gameObject, meshRenderer] : mRegistry.view<rvo::GameObject, rvo::MeshRenderer>().each()) {
 					if (!gameObject.mEnabled) continue;
 					if (!meshRenderer.mMaterial) continue;
 					if (!meshRenderer.mMaterial->mShaderProgram) continue;
@@ -599,7 +562,7 @@ struct Application final {
 
 				ImGui::Image(mGBuffers.mFboFinalColor.handle(), avail, { 0, 1 }, { 1, 0 });
 
-				if (mEditorSelected != entt::null) {
+				if (mEditorState.mEditorSelection != entt::null) {
 					static auto operation = ImGuizmo::OPERATION::TRANSLATE;
 					static auto mode = ImGuizmo::MODE::LOCAL;
 
@@ -619,11 +582,12 @@ struct Application final {
 						}
 					}
 
-					glm::mat4 matrix = mRegistry.get<GameObject>(mEditorSelected).mTransform.get();
+					auto& transform = mRegistry.get<rvo::GameObject>(mEditorState.mEditorSelection).mTransform;
+					glm::mat4 matrix = transform.get();
 					ImGuizmo::SetDrawlist();
 					ImGuizmo::SetRect(ImGui::GetWindowPos().x + cursor.x, ImGui::GetWindowPos().y + cursor.y, static_cast<float>(mGBuffers.mSize.x), static_cast<float>(mGBuffers.mSize.y));
 					if (ImGuizmo::Manipulate(glm::value_ptr(mEngineShaderData.view), glm::value_ptr(mEngineShaderData.projection), operation, mode, glm::value_ptr(matrix))) {
-						mRegistry.get<GameObject>(mEditorSelected).mTransform.set(matrix);
+						transform.set(matrix);
 					}
 				}
 
@@ -708,8 +672,9 @@ struct Application final {
 				ImGui::SliderFloat("Bloom Blend", &mBloomBlend, 0.0f, 1.0f);
 				ImGui::SliderFloat("Bloom Upscale Filter Radius (ST)", &mFilterRadius, 0.0001f, 0.1f);
 				ImGui::SliderFloat("Field of View", &mFieldOfView, 20.0f, 160.0f);
-				ImGui::SliderFloat("Near Plane", &mNearPlane, 0.001f, 10.0f);
-				ImGui::SliderFloat("Far Plane", &mFarPlane, 10.0f, 1024.0f);
+
+				ImGui::DragFloatRange2("Clipping Planes", &mClippingPlanes[0], &mClippingPlanes[1], 1.0f, 0.01f, 4096.0f);
+
 				if (ImGui::SliderInt("Swap Interval", &mSwapInterval, 0, 10)) {
 					glfwSwapInterval(mSwapInterval);
 				}
@@ -739,82 +704,8 @@ struct Application final {
 			
 			update();
 
-		
-			if (ImGui::Begin("Entities")) {
-				for (auto [entity, gameObject] : mRegistry.view<GameObject>().each()) {
-					ImGui::PushID(static_cast<int>(entity));
-
-					ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf;
-					if (entity == mEditorSelected) flags |= ImGuiTreeNodeFlags_Selected;
-					bool opened = ImGui::TreeNodeEx(gameObject.mName.c_str(), flags);
-
-					if (ImGui::IsItemActivated()) {
-						mEditorSelected = entity;
-					}
-
-					if (opened) {
-						ImGui::TreePop();
-					}
-
-					ImGui::PopID();
-				}
-			}
-			ImGui::End();
-
-			if (ImGui::Begin("Properties")) {
-				if (mEditorSelected != entt::null) {
-					GameObject& gameObject = mRegistry.get<GameObject>(mEditorSelected);
-
-					if (ImGui::CollapsingHeader("GameObject")) {
-						ImGui::Checkbox("Enabled", &gameObject.mEnabled);
-						ImGui::InputText("Name", &gameObject.mName);
-						ImGui::Separator();
-
-						glm::vec3 const euler = glm::degrees(glm::eulerAngles(gameObject.mTransform.orientation));
-						glm::vec3 newEuler = euler;
-
-						ImGui::DragFloat3("Position", glm::value_ptr(gameObject.mTransform.position), 0.1f);
-						if (ImGui::DragFloat3("Rotation", glm::value_ptr(newEuler))) {
-							glm::vec3 const deltaEuler = glm::radians(euler - newEuler);
-							gameObject.mTransform.orientation = glm::rotate(gameObject.mTransform.orientation, deltaEuler.x, { 1.0f, 0.0f, 0.0f });
-							gameObject.mTransform.orientation = glm::rotate(gameObject.mTransform.orientation, deltaEuler.y, { 0.0f, 1.0f, 0.0f });
-							gameObject.mTransform.orientation = glm::rotate(gameObject.mTransform.orientation, deltaEuler.z, { 0.0f, 0.0f, 1.0f });
-						}
-						ImGui::DragFloat3("Scale", glm::value_ptr(gameObject.mTransform.scale), 0.1f);
-
-						if (ImGui::SmallButton("Reset Transform")) {
-							gameObject.mTransform = Transform{};
-						}
-
-						ImGui::SameLine();
-
-						if (ImGui::SmallButton("Reset Orientation")) {
-							gameObject.mTransform.orientation = glm::identity<glm::quat>();
-						}
-					}
-
-					if (auto* component = mRegistry.try_get<MeshRenderer>(mEditorSelected)) {
-						if (ImGui::CollapsingHeader("MeshRenderer")) {
-							ImGui::SeparatorText("Fields");
-
-							for (auto& [key, field] : component->mMaterial->mFields) {
-								if (auto* value = std::any_cast<glm::vec3>(&field)) {
-									ImGui::DragFloat3(key.c_str(), glm::value_ptr(*value));
-								}
-							}
-						}
-					}
-
-					if (auto* component = mRegistry.try_get<DirectionalLight>(mEditorSelected)) {
-						if (ImGui::CollapsingHeader("DirectionalLight")) {
-							ImGui::ColorEdit3("Color", glm::value_ptr(component->color));
-						}
-					}
-				}
-			}
-			ImGui::End();
-
-			
+			rvo::gui_panel_entities(mRegistry, mEditorState);
+			rvo::gui_panel_properties({ mRegistry, mEditorState.mEditorSelection });
 
 			glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -852,7 +743,7 @@ struct Application final {
 	entt::registry mRegistry;
 
 	std::unordered_set<int> mKeysDown;
-	Transform mCameraTransform;
+	rvo::Transform mCameraTransform;
 
 	glm::vec2 mCursorPosLast{};
 	glm::vec2 mCursorPos{};
@@ -867,13 +758,12 @@ struct Application final {
 	float mSensitivity = 0.3f;
 	float mBloomBlend = 0.02f;
 	float mFilterRadius = 0.003f;
-	float mNearPlane = 0.1f;
-	float mFarPlane = 256.0f;
+	glm::vec2 mClippingPlanes = { 0.2f, 256.0f };
 	float mFieldOfView = 90.0f;
 	bool mCursorLocked = false;
 	int mSwapInterval = 1;
 	bool mWireframe = false;
-	entt::entity mEditorSelected = entt::null;
+	rvo::EditorState mEditorState;
 
 	InstanceRendererData mInstanceRendererData;
 
@@ -885,15 +775,11 @@ struct Application final {
 
 Application* gApp;
 
-
-
 namespace rvo {
-
 	GLuint get_instanced_buffer() {
 		return gApp->mInstanceRendererData.mBuffer.handle();
 	}
 }
-
 
 namespace rvo {
 	void entrypoint() {
