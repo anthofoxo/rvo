@@ -6,6 +6,8 @@
 #include <glm/gtx/matrix_decompose.hpp>
 
 namespace rvo {
+	glm::quat orient_in_direction(glm::vec3 direction, glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0));
+
 	struct Transform final {
 		glm::vec3 position = { 0.0f, 0.0f, 0.0f };
 		glm::quat orientation = glm::identity<glm::quat>();

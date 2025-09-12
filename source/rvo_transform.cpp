@@ -4,6 +4,25 @@
 #include <imgui.h>
 
 namespace rvo {
+	glm::quat orient_in_direction(glm::vec3 direction, glm::vec3 up) {
+		direction = glm::normalize(direction);
+
+		// Handle degenerate up (parallel to direction)
+		if (glm::abs(glm::dot(direction, up)) > 0.999f) {
+			up = glm::vec3(1, 0, 0); // pick a fallback up
+		}
+
+		// Build right/up using -Z forward convention
+		glm::vec3 forward = -direction; // because -Z is forward
+		glm::vec3 right = glm::normalize(glm::cross(up, forward));
+		glm::vec3 newUp = glm::cross(forward, right);
+
+		// Build rotation matrix (column-major)
+		glm::mat3 rotationMatrix(right, newUp, forward);
+
+		return glm::quat_cast(rotationMatrix);
+	}
+
 	glm::mat4 Transform::get() const {
 		constexpr glm::vec3 skew = { 0.0f, 0.0f, 0.0f };
 		constexpr glm::vec4 perspective = { 0.0f, 0.0f, 0.0f, 1.0f };

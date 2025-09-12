@@ -30,6 +30,8 @@ namespace rvo {
 
 			ImGui::PopID();
 		}
+
+		ImGui::End();
 	}
 
 	void gui_panel_properties(entt::handle aHandle) {

@@ -22,4 +22,10 @@ namespace rvo {
 	struct DirectionalLight final {
 		glm::vec3 color;
 	};
+
+	struct Camera final {
+		glm::vec2 clippingPlanes = { 0.02f, 256.0f };
+		float aspect = 0.0f;
+		float fov = 90.0f;
+	};
 }
