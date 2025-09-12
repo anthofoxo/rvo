@@ -1,47 +1,45 @@
 #inject
 #include "fullscreen.vert.glsl"
+#include "engine_data.glsl"
 
 #ifdef RVO_FRAG
 in vec2 texCoord;
 
-layout (binding = 0) uniform sampler2D tColor;
-layout (binding = 1) uniform sampler2D tBloom;
+layout (binding = 0) uniform sampler2D tAlbedo;
+layout (binding = 1) uniform sampler2D tNormal;
+layout (binding = 2) uniform sampler2D tDepth;
 
 layout (location = 0) out vec4 oColor;
 
-const mat3 ACESInputMat = mat3(
-    0.59719, 0.35458, 0.04823,
-    0.07600, 0.90834, 0.01566,
-    0.02840, 0.13383, 0.83777
-);
+// transpose(inverse(mat3(matrix))) * normal
 
-const mat3 ACESOutputMat = mat3(
-     1.60475, -0.53108, -0.07367,
-    -0.10208,  1.10813, -0.00605,
-    -0.00327, -0.07276,  1.07602
-);
-
-vec3 RRTAndODTFit(vec3 v) {
-    vec3 a = v * (v + 0.0245786) - 0.000090537;
-    vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
-    return a / b;
+vec4 get_eye_space(vec2 aUv, float aDepthSample) {
+	vec4 clipSpace = vec4(vec3(aUv, aDepthSample) * 2.0 - 1.0, 1.0);
+	vec4 eyeSpace = inverse(gProjection) * clipSpace;
+	return eyeSpace / eyeSpace.w;
 }
 
-vec3 ACESFitted(vec3 color) {
-    color = color * ACESInputMat;
-    color = RRTAndODTFit(color);
-    color = color * ACESOutputMat;
-    color = clamp(color, 0.0, 1.0);
-    return color;
-}
-
-uniform float uBlend;
+const float kDensity = 0.007;
+const float kGradient = 1.5;
+const vec3 kSkyColor = pow(vec3(0.7, 0.8, 0.9), vec3(2.2));
 
 void main(void) {
-    vec4 colorSample = texture(tColor, texCoord);
-    vec4 bloomSample = texture(tBloom, texCoord);
-    vec4 finalSample = mix(colorSample, bloomSample, uBlend);
-    oColor = vec4(ACESFitted(finalSample.rgb), 1.0);
-    oColor.rgb = pow(oColor.rgb, vec3(1.0 / 2.2));
+    vec4 colorSample = texture(tAlbedo, texCoord);
+    vec4 normalSample = texture(tNormal, texCoord);
+    normalSample.xyz = normalSample.xyz * 2.0 - 1.0;
+
+    float depthSample = texture(tDepth, texCoord).x;
+    float dist = length(get_eye_space(texCoord, depthSample).xyz);
+    //float visibility = clamp(exp(-pow(dist * kDensity, kGradient)), 0.0, 1.0);
+    
+    float diffuseBrightness = max(0.2, dot(normalSample.xyz, -gSunDirection));
+    // If no normal is was written then treat this fragment as fully lit
+    diffuseBrightness = mix(1.0, diffuseBrightness, normalSample.a);
+    
+    oColor = vec4(colorSample.rgb * diffuseBrightness, 1.0);
+
+    //oColor.rgb = mix(kSkyColor, oColor.rgb, visibility);
+
+    oColor.rgb = mix(oColor.rgb, kSkyColor, smoothstep(0.0, gFarPlane, dist));
 }
 #endif

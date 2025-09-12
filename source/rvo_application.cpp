@@ -15,6 +15,7 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/integer.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 #include <spdlog/spdlog.h>
 
@@ -103,6 +104,8 @@ struct Transform final {
 		glm::mat4 const result = glm::translate(get(), aValue);
 		position = result[3];
 	}
+
+	glm::vec3 forward() const { return orientation * glm::vec3(0.0f, 0.0f, -1.0f); }
 };
 
 struct GameObject final {
@@ -116,14 +119,50 @@ struct MeshRenderer final {
 	std::shared_ptr<rvo::Material> mMaterial;
 };
 
+struct DirectionalLight final {
+	glm::vec3 color;
+};
+
 struct EngineShaderData final {
 	alignas(16) glm::mat4 view;
 	alignas(16) glm::mat4 projection;
+	alignas(16) glm::vec3 sunDirection;
 	alignas(4)  float farPlane;
 	alignas(4)  float time;
 };
 
+glm::quat quatLookAt(glm::vec3 direction, glm::vec3 up = glm::vec3(0, 1, 0)) {
+	direction = glm::normalize(direction);
+
+	// Handle degenerate up (parallel to direction)
+	if (glm::abs(glm::dot(direction, up)) > 0.999f) {
+		up = glm::vec3(1, 0, 0); // pick a fallback up
+	}
+
+	// Build right/up using -Z forward convention
+	glm::vec3 forward = -direction; // because -Z is forward
+	glm::vec3 right = glm::normalize(glm::cross(up, forward));
+	glm::vec3 newUp = glm::cross(forward, right);
+
+	// Build rotation matrix (column-major)
+	glm::mat3 rotationMatrix(right, newUp, forward);
+
+	return glm::quat_cast(rotationMatrix);
+}
+
 void load_scene(entt::registry& aRegistry, rvo::AssetManager& aAssetManager) {
+	// auto create sun
+	{
+		entt::handle entity = { aRegistry, aRegistry.create() };
+		auto& gameObject = entity.emplace<GameObject>();
+		gameObject.mName = "Sun";
+		gameObject.mTransform.position = { 0.0f, 10.0f, 0.0f };
+		gameObject.mTransform.orientation = quatLookAt(glm::vec3(0.0f, -1.0f, 0.0f));
+
+		auto& directionalLight = entity.emplace<DirectionalLight>();
+		directionalLight.color = glm::vec3(1.0f);
+	}
+
 	lua_State* L = luaL_newstate();
 	luaL_openlibs(L);
 
@@ -364,7 +403,7 @@ struct Application final {
 
 		configure_khr_debug();
 
-		glfwSwapInterval(1); // ensure `mVsync == true`
+		glfwSwapInterval(mSwapInterval);
 
 		imgui_init(mWindow.handle());
 
@@ -373,8 +412,8 @@ struct Application final {
 		spdlog::info("GL_VERSION: {}", reinterpret_cast<char const*>(glGetString(GL_VERSION)));
 		spdlog::info("GL_SHADING_LANGUAGE_VERSION: {}", reinterpret_cast<char const*>(glGetString(GL_SHADING_LANGUAGE_VERSION)));
 
+		mShaderProgramFinal = mAssetManager.get_shader_program("shaders/final.glsl");
 		mShaderProgramComposite = mAssetManager.get_shader_program("shaders/composite.glsl");
-		mShaderProgramMix = mAssetManager.get_shader_program("shaders/mix.glsl");
 
 		bloomRenderer.init(mAssetManager);
 
@@ -411,8 +450,7 @@ struct Application final {
 				if (mCursorLocked) {
 					glm::vec3 localUpWorld = glm::inverse(mCameraTransform.get()) * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
 
-
-					float sensitivity = -0.3f;
+					float sensitivity = -mSensitivity;
 					if (mKeysDown.contains(GLFW_KEY_C)) sensitivity /= 4.0f;
 
 					mCameraTransform.orientation = glm::rotate(mCameraTransform.orientation, glm::radians(mCursorDelta.x * sensitivity), localUpWorld);
@@ -461,6 +499,22 @@ struct Application final {
 				static std::unordered_map<std::pair<std::shared_ptr<rvo::Mesh>, std::shared_ptr<rvo::Material>>, std::vector<Transform>, MeshMaterialPairHash> entitiesSorted;
 				entitiesSorted.clear();
 
+				// Find sun, and set sun direction to match its direction
+				{
+					// Default case is to point down if no sun object is found
+					mEngineShaderData.sunDirection = glm::vec3(0.0f, -1.0f, 0.0f);
+
+					for (auto [entity, gameObject, directionalLight] : mRegistry.view<GameObject, DirectionalLight>().each()) {
+						if (!gameObject.mEnabled) continue;
+						
+						mEngineShaderData.sunDirection = gameObject.mTransform.forward();
+						break;
+					}
+				}
+
+				mDebugInfo.numBatches = 0;
+				mDebugInfo.numEntities = 0;
+
 				for (auto [entity, gameObject, meshRenderer] : mRegistry.view<GameObject, MeshRenderer>().each()) {
 					if (!gameObject.mEnabled) continue;
 					if (!meshRenderer.mMaterial) continue;
@@ -468,6 +522,7 @@ struct Application final {
 					if (!meshRenderer.mMesh) continue;
 
 					entitiesSorted[std::make_pair(meshRenderer.mMesh, meshRenderer.mMaterial)].push_back(gameObject.mTransform);
+					++mDebugInfo.numEntities;
 				}
 
 				for (auto const& [key, items] : entitiesSorted) {
@@ -505,6 +560,7 @@ struct Application final {
 						remainingItems -= numElementsThisDraw;
 
 						mesh->draw(numElementsThisDraw);
+						++mDebugInfo.numBatches;
 
 					}
 						
@@ -523,7 +579,7 @@ struct Application final {
 				mGBuffers.mFboAlbedo.bind(0);
 				mGBuffers.mFboNormal.bind(1);
 				mGBuffers.mFboDepth.bind(2);
-				mShaderProgramMix->bind();
+				mShaderProgramComposite->bind();
 				glDrawArrays(GL_TRIANGLES, 0, 3);
 
 				bloomRenderer.render(mGBuffers.mSize, mGBuffers.mFboMixedColor, mFilterRadius, aspectRatio);
@@ -531,8 +587,8 @@ struct Application final {
 				mGBuffers.mFboFinal.bind();
 				glViewport(0, 0, mGBuffers.mSize.x, mGBuffers.mSize.y);
 
-				mShaderProgramComposite->bind();
-				mShaderProgramComposite->push_1f("uBlend", mBloomBlend);
+				mShaderProgramFinal->bind();
+				mShaderProgramFinal->push_1f("uBlend", mBloomBlend);
 				mGBuffers.mFboMixedColor.bind(0);
 				bloomRenderer.mip_chain().bind(1);
 				glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -542,10 +598,29 @@ struct Application final {
 				ImGui::Image(mGBuffers.mFboFinalColor.handle(), avail, { 0, 1 }, { 1, 0 });
 
 				if (mEditorSelected != entt::null) {
+					static auto operation = ImGuizmo::OPERATION::TRANSLATE;
+					static auto mode = ImGuizmo::MODE::LOCAL;
+
+					if (ImGui::IsWindowFocused()) {
+						if (ImGui::IsKeyPressed(ImGuiKey_W)) { operation = ImGuizmo::OPERATION::TRANSLATE; }
+						if (ImGui::IsKeyPressed(ImGuiKey_E)) { operation = ImGuizmo::OPERATION::ROTATE; }
+						if (ImGui::IsKeyPressed(ImGuiKey_R)) { operation = ImGuizmo::OPERATION::SCALE; }
+						
+						if (ImGui::IsKeyPressed(ImGuiKey_X)) {
+							if (mode == ImGuizmo::MODE::LOCAL) {
+								mode = ImGuizmo::MODE::WORLD;
+							}
+							else {
+								mode = ImGuizmo::MODE::LOCAL;
+							}
+							
+						}
+					}
+
 					glm::mat4 matrix = mRegistry.get<GameObject>(mEditorSelected).mTransform.get();
 					ImGuizmo::SetDrawlist();
 					ImGuizmo::SetRect(ImGui::GetWindowPos().x + cursor.x, ImGui::GetWindowPos().y + cursor.y, static_cast<float>(mGBuffers.mSize.x), static_cast<float>(mGBuffers.mSize.y));
-					if (ImGuizmo::Manipulate(glm::value_ptr(mEngineShaderData.view), glm::value_ptr(mEngineShaderData.projection), ImGuizmo::OPERATION::TRANSLATE, ImGuizmo::MODE::LOCAL, glm::value_ptr(matrix))) {
+					if (ImGuizmo::Manipulate(glm::value_ptr(mEngineShaderData.view), glm::value_ptr(mEngineShaderData.projection), operation, mode, glm::value_ptr(matrix))) {
 						mRegistry.get<GameObject>(mEditorSelected).mTransform.set(matrix);
 					}
 				}
@@ -633,26 +708,21 @@ struct Application final {
 				ImGui::SliderFloat("Field of View", &mFieldOfView, 20.0f, 160.0f);
 				ImGui::SliderFloat("Near Plane", &mNearPlane, 0.001f, 10.0f);
 				ImGui::SliderFloat("Far Plane", &mFarPlane, 10.0f, 1024.0f);
-				if (ImGui::Checkbox("VSync", &mVsync)) {
-					glfwSwapInterval(mVsync ? 1 : 0);
+				if (ImGui::SliderInt("Swap Interval", &mSwapInterval, 0, 10)) {
+					glfwSwapInterval(mSwapInterval);
 				}
 				ImGui::Checkbox("Wireframe", &mWireframe);
 
-				std::size_t min = 1;
-				std::size_t max = 100000;
-				if (ImGui::DragScalar("Max Instance Grouping", ImGuiDataType_U64, &mInstanceRendererData.mInstancesPerDraw, 1.0f, &min, &max)) {
-					mInstanceRendererData.init(mInstanceRendererData.mInstancesPerDraw);
+				ImGui::SliderFloat("Sensitivity", &mSensitivity, 0.01f, 1.0f);
+				
 
-					for (auto& [key, value] : mAssetManager.mMeshes) {
-						glVertexArrayVertexBuffer(value->vao(), 1, mInstanceRendererData.mBuffer.handle(), 0, sizeof(glm::mat4));
-					}
-
-				}
+				ImGui::LabelText("Num Entities", "%d", mDebugInfo.numEntities);
+				ImGui::LabelText("Num Batches", "%d", mDebugInfo.numBatches);
 
 				ImGui::LabelText("Cursor Pos", "%.1f x %.1f", mCursorPos.x, mCursorPos.y);
 				ImGui::LabelText("Cursor Delta", "%.1f x %.1f", mCursorDelta.x, mCursorDelta.y);
 
-				ImGui::LabelText("Frametime", "%f", mDeltaTime);
+				ImGui::LabelText("Frametime", "%.5fms", mDeltaTime * 1000.0);
 				ImGui::LabelText("Framerate", "%d", static_cast<int>(1.0 / mDeltaTime));
 				ImGui::LabelText("Framebuffer", "%d x %d", mFramebufferSize.x, mFramebufferSize.y);
 
@@ -732,6 +802,12 @@ struct Application final {
 							}
 						}
 					}
+
+					if (auto* component = mRegistry.try_get<DirectionalLight>(mEditorSelected)) {
+						if (ImGui::CollapsingHeader("DirectionalLight")) {
+							ImGui::ColorEdit3("Color", glm::value_ptr(component->color));
+						}
+					}
 				}
 			}
 			ImGui::End();
@@ -764,6 +840,12 @@ struct Application final {
 	double mDeltaTime = 0.0;
 	double mCurrentTime;
 
+	struct DebugInfo final {
+		int numEntities;
+		int numBatches;
+
+	} mDebugInfo;
+
 	rvo::AssetManager mAssetManager;
 	entt::registry mRegistry;
 
@@ -780,13 +862,14 @@ struct Application final {
 	rvo::Buffer mEngineShaderBuffer;
 	EngineShaderData mEngineShaderData;
 
+	float mSensitivity = 0.3f;
 	float mBloomBlend = 0.02f;
 	float mFilterRadius = 0.003f;
 	float mNearPlane = 0.1f;
 	float mFarPlane = 256.0f;
 	float mFieldOfView = 90.0f;
 	bool mCursorLocked = false;
-	bool mVsync = true;
+	int mSwapInterval = 1;
 	bool mWireframe = false;
 	entt::entity mEditorSelected = entt::null;
 
@@ -794,8 +877,8 @@ struct Application final {
 
 	rvo::BloomRenderer bloomRenderer;
 
+	std::shared_ptr<rvo::ShaderProgram> mShaderProgramFinal;
 	std::shared_ptr<rvo::ShaderProgram> mShaderProgramComposite;
-	std::shared_ptr<rvo::ShaderProgram> mShaderProgramMix;
 };
 
 Application* gApp;

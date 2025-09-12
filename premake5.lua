@@ -66,3 +66,7 @@ defines "GLFW_INCLUDE_NONE"
 debugdir "%{wks.location}/working"
 
 links { "glfw", "glad", "imgui", "imguizmo", "lua" }
+
+filter { "system:windows", "configurations:release" }
+kind "WindowedApp"
+defines "RVO_USE_WINMAIN"
