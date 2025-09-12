@@ -93,6 +93,10 @@ void main(void) {
         float kw3 = KarisAverage(groups[3]);
         float kw4 = KarisAverage(groups[4]);
         downsample = (kw0 * groups[0] + kw1 * groups[1] + kw2 * groups[2] + kw3 * groups[3] + kw4 * groups[4]) / (kw0 + kw1 + kw2 + kw3 + kw4);
+
+        for (int i = 0; i < 3; ++i) {
+            if (isnan(downsample[i])) downsample[i] = 0.0;
+        }
     }
     else {
         downsample = e * 0.125;

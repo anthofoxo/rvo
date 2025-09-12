@@ -11,8 +11,6 @@ layout (binding = 2) uniform sampler2D tDepth;
 
 layout (location = 0) out vec4 oColor;
 
-// transpose(inverse(mat3(matrix))) * normal
-
 vec4 get_eye_space(vec2 aUv, float aDepthSample) {
 	vec4 clipSpace = vec4(vec3(aUv, aDepthSample) * 2.0 - 1.0, 1.0);
 	vec4 eyeSpace = inverse(gProjection) * clipSpace;

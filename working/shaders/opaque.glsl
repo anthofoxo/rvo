@@ -16,7 +16,7 @@ layout (location = 12) in mat4 uTransform;
 void main(void) {
     gl_Position = gProjection * gView * uTransform * vec4(iPosition, 1.0);
     vTexCoord = iTexCoord;
-    vNormal = mat3(uTransform) * iNormal;
+    vNormal = transpose(inverse(mat3(uTransform))) * iNormal;
 }
 
 #endif
