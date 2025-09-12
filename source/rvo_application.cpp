@@ -440,6 +440,8 @@ struct Application final {
 
 			if (avail.x > 0 && avail.y > 0) {
 
+				mAssetManager.update();
+
 				mGBuffers.resize(glm::vec2(avail.x, avail.y));
 
 				glEnable(GL_CULL_FACE);
